@@ -5,6 +5,8 @@ from pydantic import BaseModel
 import os
 from openai import OpenAI
 from routes.chat import router as chat_router
+from routes.image import router as image_router
+from routes.video import router as video_router
 
 
 
@@ -28,8 +30,10 @@ class ChatRequest(BaseModel):
 async def root():
     return {"ok": True, "message": "AiHelper FastAPI está funcionando!"}
 
-# Incluir o router de chat
+# Incluir os routers
 app.include_router(chat_router)
+app.include_router(image_router)
+app.include_router(video_router)
 
 if __name__ == "__main__":
     # Executa com reload para desenvolvimento
