@@ -2,8 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { Client, LocalAuth } from "whatsapp-web.js";
 import qrcodeTerminal from "qrcode-terminal";
-import rootRoutes from "./routes/root";
-import sendRoutes from "./routes/send";
+import buildRoutes from "./routes";
 
 const app = Fastify({
     logger: true
@@ -36,8 +35,7 @@ client.initialize();
 
 
 
-// Register routes
-app.register(rootRoutes);
-app.register(sendRoutes, { client });
+// Register all routes (root, send, etc.) in a single aggregated plugin
+app.register(buildRoutes(client));
 
 app.listen({ port: 3000 });

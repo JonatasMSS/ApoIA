@@ -1,5 +1,8 @@
-export default async function (app: any, opts: any) {
-  const client = opts?.client;
+import type { FastifyPluginAsync } from "fastify";
+import type { Client as WhatsAppClient } from "whatsapp-web.js";
+
+const sendRoutes: FastifyPluginAsync = async (app, opts) => {
+  const client = (opts as any)?.client as WhatsAppClient;
 
   app.post("/send", async (req: any, reply: any) => {
     const { to, message } = req.body || {};
@@ -12,4 +15,6 @@ export default async function (app: any, opts: any) {
     const sent = await client.sendMessage(id._serialized, message);
     return { ok: true, id: sent.id._serialized };
   });
-}
+};
+
+export default sendRoutes;
