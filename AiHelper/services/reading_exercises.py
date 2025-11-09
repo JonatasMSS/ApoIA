@@ -15,6 +15,14 @@ Data: Novembro 2024
 from typing import Dict, List, Tuple
 import difflib
 import re
+import json
+import os
+
+try:
+    # Usa wrapper local do cliente OpenAI, se disponível
+    from libs.OpenAI import client as openai_client
+except Exception:
+    openai_client = None
 
 
 def get_reading_text(nivel: str, exercicio_num: int = 1) -> Dict:
@@ -92,6 +100,140 @@ def get_reading_text(nivel: str, exercicio_num: int = 1) -> Dict:
     index = (exercicio_num - 1) % len(textos)
     
     return textos[index]
+
+
+def generate_dynamic_reading_challenge(nivel: str, exercicio_num: int = 1) -> Dict:
+    """
+    Gera dinamicamente um desafio de leitura via GPT conforme o nível do aluno.
+
+    Regras por nível:
+    - iniciante: exatamente UMA palavra simples (ex: "CASA", "SOL").
+    - intermediário: 3 a 6 palavras básicas do cotidiano (em uma linha, separadas por espaço).
+    - avançado: 1 a 2 frases MUITO curtas e simples (no total até ~16 palavras).
+
+    Returns:
+        Dict com {"titulo", "texto", "dificuldade", "palavras_chave"}
+    """
+    if openai_client is None:
+        # Sem cliente OpenAI disponível, faz fallback
+        return get_reading_text(nivel, exercicio_num)
+
+    nivel_norm = (nivel or "iniciante").lower()
+    if "avanc" in nivel_norm:
+        nivel_norm = "avançado"
+    elif "inter" in nivel_norm:
+        nivel_norm = "intermediário"
+    else:
+        nivel_norm = "iniciante"
+
+    if nivel_norm == "iniciante":
+        regras = (
+            "Crie exatamente UMA palavra simples em português, em CAIXA ALTA, sem números e sem pontuação. "
+            "Exemplos de estilo: 'CASA', 'SOL', 'PATO', 'BOLA'."
+        )
+        dificuldade = 1
+        titulo_padrao = "Palavra do Dia"
+    elif nivel_norm == "intermediário":
+        regras = (
+            "Crie UMA LINHA com 3 a 6 palavras básicas do cotidiano, separadas por espaço, em português. "
+            "Use palavras curtas e comuns (ex: 'casa bola gato sol livro'). Não use números."
+        )
+        dificuldade = 2
+        titulo_padrao = "Palavras Básicas"
+    else:  # avançado
+        regras = (
+            "Crie um texto MUITO curto em português com 1 ou 2 frases simples, totalizando no máximo 16 palavras. "
+            "Frases curtas, vocabulário fácil, temas do cotidiano."
+        )
+        dificuldade = 3
+        titulo_padrao = "Leitura Simples"
+
+    system = (
+        "Você é uma assistente de alfabetização. Gere conteúdos MUITO simples, amigáveis e adequados a crianças. "
+        "Responda SOMENTE em JSON válido, sem texto extra."
+    )
+    user = (
+        f"Nível: {nivel_norm}. {regras} \n\n"
+        "Requisitos de saída (JSON):\n"
+        "{\n"
+        "  \"titulo\": string (um título curto e amigável),\n"
+        "  \"texto\": string,\n"
+        "  \"dificuldade\": number (1 para iniciante, 2 para intermediário, 3 para avançado),\n"
+        "  \"palavras_chave\": string[] (lista de 3 a 8 palavras relevantes, todas em minúsculas)\n"
+        "}\n\n"
+        "Observações:\n"
+        "- Use apenas caracteres em português.\n"
+        "- NUNCA inclua explicações fora do JSON.\n"
+    )
+
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0.4,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+        )
+        content = resp.choices[0].message.content if resp.choices else "{}"
+        # Tenta isolar JSON se vier algo extra
+        json_str = _extract_json(content)
+        data = json.loads(json_str)
+
+        # Saneamento básico
+        titulo = str(data.get("titulo") or titulo_padrao).strip()
+        texto = str(data.get("texto") or "").strip()
+        palavras_chave = data.get("palavras_chave") or []
+        if not isinstance(palavras_chave, list):
+            palavras_chave = []
+
+        # Garantias mínimas por nível
+        if nivel_norm == "iniciante":
+            # Texto deve ser uma única palavra
+            texto = texto.replace("\n", " ").strip()
+            partes = texto.split()
+            if len(partes) != 1:
+                # fallback simples: pega a primeira palavra válida
+                texto = partes[0] if partes else "SOL"
+        elif nivel_norm == "intermediário":
+            # Entre 3 e 6 palavras
+            palavras = texto.replace("\n", " ").split()
+            if len(palavras) < 3:
+                palavras = (palavras + ["casa", "bola", "gato"])[:3]
+            elif len(palavras) > 6:
+                palavras = palavras[:6]
+            texto = " ".join(palavras)
+        else:
+            # 1-2 frases, máx ~16 palavras
+            palavras = texto.replace("\n", " ").split()
+            if len(palavras) == 0:
+                texto = "Eu leio um livro."
+            elif len(palavras) > 16:
+                texto = " ".join(palavras[:16]).strip()
+
+        return {
+            "titulo": titulo or titulo_padrao,
+            "texto": texto,
+            "dificuldade": dificuldade,
+            "palavras_chave": palavras_chave[:8],
+        }
+    except Exception:
+        # Em caso de qualquer falha, volta para versão estática
+        return get_reading_text(nivel_norm, exercicio_num)
+
+
+def _extract_json(text: str) -> str:
+    """Extrai o primeiro bloco JSON válido de um texto qualquer."""
+    text = text.strip()
+    if text.startswith("{") and text.endswith("}"):
+        return text
+    # Busca pelo primeiro { ... }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start:end+1]
+    # Fallback
+    return "{}"
 
 
 def analyze_reading_attempt(texto_esperado: str, texto_lido: str) -> Dict:

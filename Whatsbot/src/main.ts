@@ -23,18 +23,45 @@ import { MessageMedia } from "whatsapp-web.js";
 //   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
 // });
 
+// Robust error handling for Windows file-locks during LocalAuth logout
+process.on('uncaughtException', (err: any) => {
+  const msg = String(err?.message || err);
+  // Ignore EBUSY unlink errors on Chromium cookie journal during logout (Windows-specific)
+  if (msg.includes('EBUSY') && msg.includes('Cookies-journal')) {
+    console.warn('⚠️ Ignorando erro EBUSY em Cookies-journal durante logout (Windows).');
+    return;
+  }
+  throw err;
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  const msg = String((reason as any)?.message || reason);
+  if (msg.includes('EBUSY') && msg.includes('Cookies-journal')) {
+    console.warn('⚠️ Ignorando rejeição EBUSY em Cookies-journal durante logout (Windows).');
+    return;
+  }
+  console.error('Unhandled rejection:', reason);
+});
+
 const client = new Client({
-  authStrategy: new LocalAuth(),
+  // Increase rmMaxRetries to mitigate transient file locks on Windows
+  authStrategy: new LocalAuth({ rmMaxRetries: 10 }),
   puppeteer: { headless: true, args: ["--no-sandbox"] },
 });
 
-client.on("qr", qr => qrcodeTerminal.generate(qr, { small: true }));
+client.on("qr", (qr: string) => qrcodeTerminal.generate(qr, { small: true }));
 client.on("ready", () => console.log("✅ Conectado ao WhatsApp!"));
 client.on("authenticated", () => console.log("🔐 Autenticado!"));
-client.on("auth_failure", msg => console.log("❌ Falha na autenticação:", msg));
-client.on("disconnected", reason => console.log("🔌Desconectado:", reason));
+client.on("auth_failure", (msg: string) => console.log("❌ Falha na autenticação:", msg));
+client.on("disconnected", async (reason: string) => {
+  console.log("🔌Desconectado:", reason);
+  // Pequeno atraso para permitir que o Chromium libere locks de arquivo em Windows
+  if (reason === 'LOGOUT') {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+});
 
-client.on("loading_screen", (percent, message) => console.log(`📱 Carregando: ${percent}% - ${message}`));
+client.on("loading_screen", (percent: number, message: string) => console.log(`📱 Carregando: ${percent}% - ${message}`));
 
 client.on("message", async (message: Message) => {
     const chat = await message.getChat();
@@ -46,7 +73,8 @@ client.on("message", async (message: Message) => {
         // Aceita mensagens de áudio (ptt) ou texto
         if ((message.hasMedia && message.type === 'ptt') || message.type === 'chat') {
           console.log(`📩 Mensagem recebida de ${message.from}`);
-          await chat.sendMessage("⏳ Aguarde um momento, estou processando...");
+          // Mensagem de espera minimalista (sem texto longo)
+          await chat.sendMessage("⏳ Espera...");
           
           const data = await sendAudioBase64(message, message.from);
           
@@ -59,20 +87,18 @@ client.on("message", async (message: Message) => {
             const audioExplicacaoMedia = new MessageMedia('audio/wav', audioExplicacao);
             await chat.sendMessage(audioExplicacaoMedia);
             
-            // 2) Envia a imagem com o texto
+            // 2) Envia a imagem com o texto (sem legenda/caption)
             const imageBase64 = data.imagem_base64!.split(',')[1];
             const imageMedia = new MessageMedia('image/png', imageBase64);
-            await chat.sendMessage(imageMedia, { 
-              caption: `📖 ${data.texto_titulo || 'Texto para Leitura'}\n\nAcompanhe o texto na imagem enquanto ouve o áudio! 👇` 
-            });
+            await chat.sendMessage(imageMedia);
             
             // 3) Envia o áudio da IA lendo o texto
             const audioTexto = (data as any).texto_audio_base64!.split(',')[1];
             const audioTextoMedia = new MessageMedia('audio/wav', audioTexto);
             await chat.sendMessage(audioTextoMedia);
             
-            // 4) Instrução final
-            await chat.sendMessage("🎤 Agora é sua vez! Tente ler o texto em voz alta e me envie um áudio! 😊");
+            // 4) Instrução final simplificada (sem frase longa)
+            await chat.sendMessage("🎤 Ler e mandar áudio.");
             
           } else if (data.tipo === 'imagem_com_audio') {
             console.log('🎨🔊 Enviando imagem de teste + áudio explicativo');
@@ -82,19 +108,17 @@ client.on("message", async (message: Message) => {
             const audioMedia = new MessageMedia('audio/wav', audioBase64);
             await chat.sendMessage(audioMedia);
             
-            // 2) Envia a imagem com legenda
+            // 2) Envia a imagem sem legenda
             const imageBase64 = data.imagem_base64!.split(',')[1];
             const imageMedia = new MessageMedia('image/png', imageBase64);
-            await chat.sendMessage(imageMedia, { 
-              caption: "👆 Olhe bem as palavras da imagem acima. Depois me diga ou escreva quais palavras você consegue ler! 😊" 
-            });
+            await chat.sendMessage(imageMedia);
             
           } else if (data.tipo === 'imagem') {
             console.log('🎨 Enviando apenas imagem');
             // Envia apenas a imagem
             const imageBase64 = data.imagem_base64!.split(',')[1];
             const imageMedia = new MessageMedia('image/png', imageBase64);
-            await chat.sendMessage(imageMedia, { caption: data.resposta_texto });
+            await chat.sendMessage(imageMedia);
             
           } else {
             console.log('🔊 Enviando apenas áudio');
