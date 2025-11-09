@@ -1,12 +1,16 @@
 from fastapi import APIRouter, UploadFile, File, Form
+from pydantic import BaseModel
 from pydub import AudioSegment
 from openai import OpenAI
 from datetime import datetime
 import os
-from libs.OpenAI import client
+# from libs.OpenAI import client
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Cria o router (não uma nova instância de FastAPI)
 router = APIRouter(prefix="/audio", tags=["Áudio"])
@@ -66,23 +70,28 @@ async def processar_audio(numero: str = Form(...), audio: UploadFile = File(...)
         "resposta_audio": resposta_wav
     }
 
-@router.post("/falar/")
+
+@router.post("/falar")
 async def falar(texto: str = Form(...)):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     resposta_wav = f"storage/respostas/teste_{timestamp}.wav"
 
+
+    print("Geração de áudio iniciada...")
     # Gera áudio pela TTS da OpenAI
     sintetizado = client.audio.speech.create(
         model="gpt-4o-mini-tts",
         voice="alloy",
         input=texto
     )
+    print("Geração de áudio finalizada.")
 
     with open(resposta_wav, "wb") as f:
+        print("Preparando para escrever o arquivo de áudio...")
         f.write(sintetizado.read())
 
     return {
         "status": "ok",
         "entrada_texto": texto,
         "arquivo_audio": resposta_wav
-    }
+        }
