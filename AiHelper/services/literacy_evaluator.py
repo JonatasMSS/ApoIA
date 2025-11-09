@@ -103,16 +103,13 @@ def generate_test_image_prompt(words: List[str]) -> str:
         Prompt detalhado para geração da imagem
     """
     prompt = (
-        f"Crie uma imagem educativa e clara para alfabetização infantil. "
+        f"Crie uma imagem educativa e clara para alfabetização."
         f"Mostre {len(words)} palavras simples escritas em letras GRANDES, COLORIDAS e bem legíveis "
-        f"(fonte tipo Comic Sans ou similar, amigável e fácil de ler). "
         f"As palavras devem estar dispostas verticalmente ou em uma grade 2x2. "
         f"Use cores vibrantes diferentes para cada palavra. "
-        f"Adicione pequenos ícones ilustrativos coloridos ao lado de cada palavra "
-        f"para facilitar o reconhecimento. "
         f"As palavras são: {', '.join(words)}. "
         f"Fundo branco ou muito claro para boa legibilidade. "
-        f"Estilo alegre e motivador."
+        f"Gere SEMPRE palavras em PT-BR." 
     )
     
     return prompt
