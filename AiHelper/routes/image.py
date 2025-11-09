@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
+import requests
+import base64
 
 load_dotenv()
 router = APIRouter()
@@ -34,9 +36,23 @@ async def generate_image(req: ImageRequest):
             n=req.n
         )
         
-        # Retorna as URLs das imagens geradas
-        images = [{"url": image.url, "revised_prompt": image.revised_prompt} 
-                  for image in response.data]
+        # Buscar e codificar imagens em base64
+        images = []
+        for image in response.data:
+            try:
+                # Fazer download da imagem
+                img_response = requests.get(image.url)
+                img_response.raise_for_status()
+                
+                # Codificar em base64
+                img_base64 = base64.b64encode(img_response.content).decode('utf-8')
+                
+                images.append({
+                    "base64": f"data:image/png;base64,{img_base64}",
+                    "revised_prompt": image.revised_prompt
+                })
+            except requests.RequestException as e:
+                raise HTTPException(status_code=500, detail=f"Erro ao baixar imagem: {str(e)}")
         
         return {
             "success": True,

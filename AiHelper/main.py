@@ -8,6 +8,7 @@ from services.user import insert_user_service
 from routes.chat import router as chat_router
 from routes.image import router as image_router
 from routes.video import router as video_router
+from routes.audio import router as audio_router
 
 
 
@@ -22,7 +23,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 class ChatRequest(BaseModel):
     message: str
@@ -35,6 +36,7 @@ async def root():
 app.include_router(chat_router)
 app.include_router(image_router)
 app.include_router(video_router)
+app.include_router(audio_router)
 
 if __name__ == "__main__":
     # Executa com reload para desenvolvimento
