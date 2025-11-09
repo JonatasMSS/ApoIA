@@ -3,6 +3,9 @@ import cors from "@fastify/cors";
 import { Client, LocalAuth, type Message } from "whatsapp-web.js";
 import qrcodeTerminal from "qrcode-terminal";
 import { initializeRedis } from "./lib/redis";
+import fs from 'fs';
+import { sendAudioBase64 } from "./service/AiServices";
+import { MessageMedia } from "whatsapp-web.js";
 
 
 
@@ -35,9 +38,18 @@ client.on("loading_screen", (percent, message) => console.log(`📱 Carregando: 
 
 client.on("message", async (message: Message) => {
     const chat = await message.getChat();
-    console.log(message.from)
+    console.log(`Mensage de ${message.from}: ${message.body}`);
+    console.log(`Mensage tem midia: ${message.hasMedia} e tipo: ${message.type}`);
     if(!message.fromMe && !chat.isGroup && message.from.split("@")[0] == "558388083711") {
-        
+        if (message.hasMedia && message.type === 'ptt') {
+          console.log(`📩 Mensagem de áudio recebida de ${message.from}`);
+          await chat.sendMessage("Aguarde um pouco, processando seu áudio...");
+          const data = await sendAudioBase64(message, message.from)
+          const media = new MessageMedia('audio/wav', data);
+          await chat.sendMessage(media);
+          
+            
+        }
     }
 });
 

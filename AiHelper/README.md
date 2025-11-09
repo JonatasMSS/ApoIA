@@ -7,7 +7,7 @@ Arquivos importantes
 - `routes/chat.py` — rota POST `/chat` para interagir com OpenAI.
 - `routes/image.py` — rota POST `/generate-image` para gerar imagens com DALL-E 3 e retornar em base64.
 - `routes/video.py` — rotas POST `/generate-video` (simulado) e `/download-video` para vídeos.
-- `routes/audio.py` — rotas POST `/processar_audio` (transcrição + resposta + TTS) e `/falar` (TTS apenas).
+- `routes/audio.py` — rotas POST `/audio/processar/` (transcrição + resposta + TTS) e `/audio/falar` (TTS apenas, retornam base64 do áudio).
 - `lib/__init__.py` — inicialização do cliente Supabase.
 - `services/user.py` — exemplo de serviço usando Supabase.
 - `requirements.txt` — dependências necessárias (incluindo openai, python-dotenv, supabase, requests, pydub).
@@ -55,16 +55,16 @@ curl -H "Content-Type: application/json" -d '{"prompt":"A cat playing in the gar
 # POST /download-video
 curl -X POST "http://localhost:8000/download-video?video_url=https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4&filename=my_video.mp4"
 
-# POST /processar_audio (requer arquivo de áudio)
-curl -X POST -F "numero=123456789" -F "audio=@caminho/para/audio.ogg" http://localhost:8000/processar_audio
+# POST /audio/processar/ (requer arquivo de áudio, retorna base64 do áudio)
+curl -X POST -F "numero=123456789" -F "audio=@caminho/para/audio.ogg" http://localhost:8000/audio/processar/
 
-# POST /falar
-curl -H "Content-Type: application/json" -d '{"text":"Olá, como você está?"}' http://localhost:8000/falar
+# POST /audio/falar (retorna base64 do áudio)
+curl -X POST -d "texto=Olá, mundo!" http://localhost:8000/audio/falar
 ```
 
 Notas
 - A configuração de CORS permite todas as origens para simplificar o desenvolvimento (`allow_origins = ["*"]`). Em produção, restrinja para domínios confiáveis.
 - Certifique-se de ter chaves válidas da OpenAI e Supabase no `.env`.
 - A geração de vídeo usa uma simulação, pois a API do Sora não está disponível publicamente.
-- Para as rotas de áudio, certifique-se de que o `ffmpeg` está instalado no sistema (necessário para pydub converter áudios).
+- As rotas de áudio retornam o áudio em base64 (`data:audio/wav;base64,...`). Para reconstruir o áudio, extraia a parte após a vírgula, decodifique com base64 e salve como arquivo .wav.
 - Adicione mais rotas em `routes/` e serviços em `services/` conforme necessário e registre-as no `main.py`.
