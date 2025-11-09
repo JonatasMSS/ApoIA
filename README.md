@@ -2,6 +2,12 @@
 
 Sistema completo de alfabetização via WhatsApp utilizando IA, desenvolvido com FastAPI (backend) e TypeScript (bot WhatsApp). O projeto combina processamento de áudio, análise de leitura, geração de imagens e chatbot conversacional para ensinar adultos a ler e escrever de forma personalizada.
 
+## Integrantes
+
+- Jonatas Miguel de Sousa Soares -> jonatas.miguelss@gmail.com
+- Samuel Ismael ->samuel.ismael@academico.ufpb.br
+- Cauã Lacerda -> lacerdacaua1010@gmail.com
+
 ## 📋 Índice
 
 - [Sobre o Projeto](#sobre-o-projeto)
