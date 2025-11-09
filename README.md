@@ -74,8 +74,6 @@ Sistema completo de alfabetização via WhatsApp utilizando IA, desenvolvido com
 
 - ✅ **Integração WhatsApp Web** - whatsapp-web.js
 - ✅ **Envio de Áudios** - Base64 para API
-- ✅ **Rate Limiting** - Controle de spam
-- ✅ **Cache Redis** - Otimização de requisições
 - ✅ **API REST** - Fastify com TypeScript
 
 ## 🛠️ Tecnologias
@@ -88,7 +86,6 @@ Sistema completo de alfabetização via WhatsApp utilizando IA, desenvolvido com
 | OpenAI | 2.7.1 | GPT-4, Whisper, DALL-E, TTS |
 | LangChain | 1.0.0+ | Framework de IA |
 | FAISS | 1.12.0 | Busca vetorial |
-| Supabase | 2.24.0 | Banco de dados PostgreSQL |
 | Pillow | 12.0.0 | Processamento de imagens |
 | Pydantic | 2.12.4 | Validação de dados |
 | Uvicorn | 0.32.1 | Servidor ASGI |
@@ -100,7 +97,6 @@ Sistema completo de alfabetização via WhatsApp utilizando IA, desenvolvido com
 | Fastify | 5.6.1 | Framework web |
 | whatsapp-web.js | 1.34.2 | Cliente WhatsApp |
 | Axios | 1.13.2 | Cliente HTTP |
-| Redis | 5.9.0 | Cache em memória |
 | TypeScript | 5.9.3 | Linguagem tipada |
 
 ## 📦 Requisitos
