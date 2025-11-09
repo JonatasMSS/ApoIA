@@ -100,7 +100,7 @@ async def download_video(video_url: str, filename: str = "generated_video.mp4"):
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Erro ao salvar vídeo: {str(e)}"
+            detail=f"Erro ao verificar status do vídeo: {str(e)}"
         )
 
 @router.get("/veo-info")
