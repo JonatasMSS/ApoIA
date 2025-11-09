@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 import os
 from openai import OpenAI
+from services.user import insert_user_service
 from routes.chat import router as chat_router
 from routes.image import router as image_router
 from routes.video import router as video_router
@@ -40,5 +41,6 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+   
 
 

@@ -1,11 +1,13 @@
 # AiHelper — mini projeto FastAPI
 
-Pequeno projeto exemplar com FastAPI para testar endpoints e CORS, integrado com OpenAI.
+Pequeno projeto exemplar com FastAPI para testar endpoints e CORS, integrado com OpenAI e Supabase.
 
 Arquivos importantes
 - `main.py` — aplicação FastAPI com CORS, rota GET `/` e rotas organizadas em `routes/`.
 - `routes/chat.py` — rota POST `/chat` para interagir com OpenAI.
-- `requirements.txt` — dependências necessárias (incluindo openai e python-dotenv).
+- `lib/__init__.py` — inicialização do cliente Supabase.
+- `services/user.py` — exemplo de serviço usando Supabase.
+- `requirements.txt` — dependências necessárias (incluindo openai, python-dotenv, supabase).
 
 Como usar (PowerShell)
 
@@ -17,7 +19,12 @@ python -m pip install -r requirements.txt
 ```
 
 2. Configurar variável de ambiente:
-   - Crie um arquivo `.env` na raiz do projeto com: `OPENAI_API_KEY=your_api_key_here`
+   - Crie um arquivo `.env` na raiz do projeto com:
+     ```
+     OPENAI_API_KEY=your_openai_api_key_here
+     SUPABASE_URL=your_supabase_project_url_here
+     SUPABASE_KEY=your_supabase_anon_key_here
+     ```
 
 3. Iniciar em modo de desenvolvimento (com reload):
 
@@ -39,5 +46,5 @@ curl -H "Content-Type: application/json" -d '{"message":"Hello, tell me a joke"}
 
 Notas
 - A configuração de CORS permite todas as origens para simplificar o desenvolvimento (`allow_origins = ["*"]`). Em produção, restrinja para domínios confiáveis.
-- Certifique-se de ter uma chave válida da OpenAI no `.env`.
-- Adicione mais rotas em `routes/` conforme necessário e registre-as no `main.py`.
+- Certifique-se de ter chaves válidas da OpenAI e Supabase no `.env`.
+- Adicione mais rotas em `routes/` e serviços em `services/` conforme necessário e registre-as no `main.py`.

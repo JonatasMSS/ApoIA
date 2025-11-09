@@ -32,10 +32,3 @@ client.on("loading_screen", (percent, message) => console.log(`📱 Carregando: 
 
 
 client.initialize();
-
-
-
-// Register all routes (root, send, etc.) in a single aggregated plugin
-app.register(buildRoutes(client));
-
-app.listen({ port: 3000 });
