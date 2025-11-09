@@ -118,8 +118,8 @@ Sistema completo de alfabetização via WhatsApp utilizando IA, desenvolvido com
 ### 1. Clone o repositório
 
 ```bash
-git clone https://github.com/JonatasMSS/Devs_impacto_16.git
-cd Devs_impacto_16
+git clone https://github.com/JonatasMSS/ApoIA.git
+cd ApoIA
 ```
 
 ### 2. Backend (AiHelper)
@@ -231,7 +231,7 @@ curl "http://localhost:8000/users/1"
 ## 📁 Estrutura do Projeto
 
 ```
-Devs_impacto_16/
+ApoIA/
 ├── AiHelper/                  # Backend FastAPI
 │   ├── libs/                  # Clientes (OpenAI, Supabase)
 │   │   ├── __init__.py
