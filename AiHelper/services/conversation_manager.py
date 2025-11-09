@@ -19,7 +19,7 @@ Data: Novembro 2024
 """
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from typing import Dict, List
 import os
@@ -35,7 +35,7 @@ from services.literacy_evaluator import (
 from services.reading_exercises import (
     get_reading_text,
     analyze_reading_attempt,
-    generate_feedback_message
+    generate_dynamic_reading_challenge
 )
 from services.user_state_manager import UserStateManager
 from services.conversation_history import ConversationHistoryManager
@@ -216,6 +216,8 @@ class ConversationManager:
             return self._handle_reading_exercises_phase(state, user_id)
         elif fase == "aguardando_leitura_audio":
             return self._handle_reading_evaluation_phase(state, user_message, user_id)
+        elif fase == "aguardando_decisao_pos_feedback":
+            return self._handle_post_feedback_decision(state, user_message, user_id)
         else:  # personalizado
             return self._handle_personalized_phase(state, user_message, user_id)
     
@@ -255,7 +257,7 @@ Pra começar, me conta seu nome e sua idade, por favor."""
         if state["nome"] and state["idade"]:
             print(f"✅ Dados completos! Avançando para teste...")
             
-            resposta = f"""Prazer em te conhecer, {state["nome"]}! 🤗
+            resposta = f"""Muito legal te conhecer, {state["nome"]}! 🤗
 
 Agora eu quero ver como você lê essas palavras.
 
@@ -296,22 +298,31 @@ Vou enviar uma imagem com algumas palavras pra você. Depois, diga ou escreva qu
         # Analisa resposta
         resultado = analyze_reading_level(user_message, state["palavras_teste"])
         
-        # Atualiza estado
+        # Atualiza estado (com promoção mínima baseada em acertos)
         state["nivel_alfabetizacao"] = resultado["nivel"]
         state["acertos"] = resultado["acertos"]
         state["total_testes"] = resultado["total"]
+
+        # Regra solicitada: ao acertar 4 palavras ou mais no teste inicial,
+        # o próximo exercício deve ser um texto simples (nível avançado).
+        # Isso garante que não enviaremos apenas UMA palavra após bom desempenho.
+        try:
+            if int(resultado.get("acertos", 0)) >= 4:
+                state["nivel_alfabetizacao"] = "avançado"
+        except Exception:
+            pass
         state["exercicio_numero"] = 1  # Inicia contador de exercícios
         state["fase"] = "exercicios_leitura"  # Vai para exercícios de leitura
         self.state_manager.save_user_state(user_id)
         
         print(f"📊 Resultado: {resultado['acertos']}/{resultado['total']} - {resultado['nivel'].upper()}")
         print(f"📖 Avançando para exercícios de leitura")
-        
+
         resposta = f"""Muito bem, {state["nome"]}! 👏
 
 Você acertou {resultado["acertos"]} de {resultado["total"]} palavras!
 
-Seu nível é: {resultado["nivel"].upper()}
+Seu nível é: {state["nivel_alfabetizacao"].upper()} (ajustado para enviar um texto simples)
 
 Agora vamos praticar leitura em voz alta! 📚
 
@@ -320,10 +331,10 @@ Vou te enviar um texto bem simples. Você vai:
 2️⃣ Ouvir eu lendo o texto (áudio)
 3️⃣ Tentar ler o texto em voz alta
 
-Depois eu vou te dar um feedback sobre como você leu! 😊
+Depois eu vou te dar um retorno sobre como você leu! 😊
 
 Pronto para começar?"""
-        
+
         return resposta
     
     def _handle_reading_exercises_phase(self, state: Dict, user_id: str) -> str:
@@ -332,7 +343,14 @@ Pronto para começar?"""
         
         # Pega texto baseado no nível
         exercicio_num = state.get("exercicio_numero", 1)
-        texto_info = get_reading_text(state["nivel_alfabetizacao"], exercicio_num)
+        # Tenta gerar dinamicamente via GPT; se falhar, usa fallback estático
+        try:
+            texto_info = generate_dynamic_reading_challenge(state["nivel_alfabetizacao"], exercicio_num)
+            # Garante chaves esperadas
+            if not isinstance(texto_info, dict) or not texto_info.get("texto"):
+                raise ValueError("conteúdo inválido do gerador dinâmico")
+        except Exception as _:
+            texto_info = get_reading_text(state["nivel_alfabetizacao"], exercicio_num)
         
         # Salva texto atual no estado
         state["texto_atual"] = texto_info["texto"]
@@ -365,38 +383,131 @@ Vou te enviar o texto agora! Primeiro, veja o texto e ouça eu lendo. Depois, vo
         
         # Analisa tentativa de leitura
         resultado = analyze_reading_attempt(texto_esperado, user_message)
-        
-        # Gera feedback
-        texto_info = {"titulo": texto_titulo}
-        feedback = generate_feedback_message(resultado, texto_info)
-        
+
+        # Gera retorno amigável com LLM (PT-BR simples, sem termos técnicos)
+        feedback = self._generate_friendly_feedback(resultado, texto_titulo, state)
+
         print(f"   📊 Similaridade: {resultado['similaridade']}%")
         print(f"   ⭐ Avaliação: {resultado['avaliacao']}")
-        
-        # Pergunta se quer continuar ou ir para conversação livre
-        exercicio_num = state.get("exercicio_numero", 1)
-        
-        if resultado['avaliacao'] in ["excelente", "bom"]:
-            # Oferece próximo exercício
-            state["exercicio_numero"] = exercicio_num + 1
-            state["fase"] = "exercicios_leitura"
-            
-            feedback += f"\n\n🎯 Quer fazer mais um exercício de leitura?"
-            feedback += f"\n\nDiga 'sim' para continuar ou 'não' se quiser conversar livremente!"
-        else:
-            # Oferece repetir o mesmo exercício
-            feedback += f"\n\n🔄 Quer tentar ler este texto de novo?"
-            feedback += f"\n\nDiga 'sim' para tentar novamente ou 'não' para ir para o próximo!"
-            
-            # Se disser não, vai para próximo
-            if "nao" in user_message.lower() or "não" in user_message.lower():
-                state["exercicio_numero"] = exercicio_num + 1
-                state["fase"] = "exercicios_leitura"
-            else:
-                state["fase"] = "exercicios_leitura"  # Volta para enviar o mesmo texto
-        
+
+        # Após o retorno, aguardamos a decisão do aluno por áudio livre
+        state["fase"] = "aguardando_decisao_pos_feedback"
         self.state_manager.save_user_state(user_id)
+
+        # Mensagem curta e simples (sem números fixos)
+        feedback += ("\n\nO que você quer fazer agora? Diga: ajuda ou outro exercício.")
         return feedback
+
+    def _generate_friendly_feedback(self, resultado: Dict, titulo: str, state: Dict) -> str:
+        """Cria um retorno curto e carinhoso usando LLM, sem termos técnicos ou porcentagens."""
+        try:
+            nome = state.get("nome") or "amigo(a)"
+            nivel = state.get("nivel_alfabetizacao") or "iniciante"
+            avaliacao = resultado.get("avaliacao", "regular")
+
+            # Orientações por avaliação, sem números
+            dica_por_avaliacao = {
+                "excelente": "Você leu muito bem! Sua leitura está fluindo. Parabéns!",
+                "bom": "Você foi muito bem! Só mais um pouquinho de prática e fica ainda melhor.",
+                "regular": "Bom esforço! Vamos praticar mais um pouco. Eu estou com você.",
+                "precisa_melhorar": "Tudo bem! A gente treina junto e você vai conseguir."
+            }
+            elogio = dica_por_avaliacao.get(avaliacao, "Ótimo trabalho! Vamos seguir juntos.")
+
+            system = (
+                "Você é a Apo.IA. Escreva um retorno MUITO curto, carinhoso e simples em português do Brasil. "
+                "NÃO use palavras difíceis nem termos como 'análise', 'estatística', 'porcentagem' ou 'dados'. "
+                "Evite números. Não use palavras estrangeiras. Use frases curtas e amigáveis."
+            )
+            user = (
+                f"Nome: {nome}. Nível: {nivel}. Título do texto: {titulo}. "
+                f"Avaliação: {avaliacao}. Mensagem base: {elogio}. "
+                "Crie 2 a 3 frases curtas encorajando a continuar."
+            )
+
+            messages = [
+                SystemMessage(content=system),
+                HumanMessage(content=user)
+            ]
+            resp = self.llm.invoke(messages)
+            content = resp.content if hasattr(resp, 'content') else str(resp)
+            # Garantias mínimas: remover possíveis termos indesejados
+            ban = ["análise", "analise", "estatística", "porcentagem", "dados", "%"]
+            for b in ban:
+                content = content.replace(b, "")
+            return content.strip()
+        except Exception:
+            # Fallback simples
+            return "Você foi muito bem! Vamos continuar treinando juntos. Eu acredito em você!"
+
+    # ====== NOVA FASE: decisão livre após retorno ======
+    def _handle_post_feedback_decision(self, state: Dict, user_message: str, user_id: str) -> str:
+        """Interpreta a decisão do aluno via GPT (sem números fixos)."""
+        print("✅ FASE: Decisão pós-retorno (interpretação livre)")
+        decision = self._decide_next_action(user_message, state)
+
+        action = decision.get("action", "unknown")
+        increase = decision.get("increase_level")
+
+        if action == "help":
+            state["fase"] = "personalizado"
+            self.state_manager.save_user_state(user_id)
+            return (
+                "Vamos para o modo de ajuda. Pode me dizer o que você quer aprender agora. 😊"
+            )
+
+        if action == "exercise":
+            # Ajusta nível se pedido para aumentar
+            if isinstance(increase, bool) and increase:
+                atual = state.get("nivel_alfabetizacao") or "iniciante"
+                novo = self._proximo_nivel(atual)
+                state["nivel_alfabetizacao"] = novo
+            # prepara próximo exercício
+            state["fase"] = "exercicios_leitura"
+            state["exercicio_numero"] = int(state.get("exercicio_numero", 1)) + 1
+            self.state_manager.save_user_state(user_id)
+            return self._handle_reading_exercises_phase(state, user_id)
+
+        # Se não ficou claro, peça de forma simples (sem números)
+        return "Não entendi. Prefere ajuda ou outro exercício?"
+
+    def _proximo_nivel(self, n: str) -> str:
+        n = (n or "iniciante").lower()
+        if n.startswith("avanc"): return "avançado"
+        if n.startswith("inter"): return "avançado"
+        return "intermediário"
+
+    # ==================== CLASSIFICADOR GERAL DE DECISÃO (GPT) ====================
+    def _decide_next_action(self, user_message: str, state: Dict) -> Dict:
+        """Retorna {action: 'help'|'exercise'|'unknown', increase_level: true|false|null}."""
+        try:
+            nivel_atual = state.get("nivel_alfabetizacao") or "iniciante"
+            messages = [
+                SystemMessage(content=(
+                    "Você é um classificador. Leia a fala do aluno em português e decida o próximo passo.\n"
+                    "Responda SOMENTE em JSON válido com o formato:\n"
+                    "{\n  \"action\": \"help|exercise|unknown\",\n  \"increase_level\": true|false|null\n}\n"
+                    "Definições:\n- action=help: o aluno quer ajuda/conversar com a assistente.\n"
+                    "- action=exercise: o aluno quer fazer outro exercício.\n"
+                    "- increase_level: true se o aluno pediu algo mais difícil / aumentar nível; false se pediu manter; null se não ficou claro.\n"
+                    "Considere variações livres como 'quero continuar', 'mais difícil', 'me ajuda', 'fazer outro', 'pode ser mais fácil', etc.\n"
+                )),
+                HumanMessage(content=f"Nível atual: {nivel_atual}. Fala do aluno: {user_message}")
+            ]
+            resp = self.llm.invoke(messages)
+            content = resp.content if hasattr(resp, 'content') else str(resp)
+            import json as _json
+            data = _json.loads(content)
+            # Sanitiza saída
+            action = str(data.get('action', 'unknown')).strip().lower()
+            if action not in {"help", "exercise", "unknown"}:
+                action = "unknown"
+            increase = data.get('increase_level', None)
+            if not isinstance(increase, bool):
+                increase = None
+            return {"action": action, "increase_level": increase}
+        except Exception:
+            return {"action": "unknown", "increase_level": None}
     
     def _handle_personalized_phase(self, state: Dict, user_message: str, user_id: str) -> str:
         """Fase 5: Aprendizado personalizado com RAG."""
@@ -457,6 +568,9 @@ Vou te enviar o texto agora! Primeiro, veja o texto e ouça eu lendo. Depois, vo
 6. Celebre progressos
 7. Adapte ao nível do aluno
 8. Ensine fonética quando apropriado
+9. NUNCA use palavras estrangeiras. Substitua por termos do português do Brasil.
+     - Exemplos: "feedback" -> "retorno", "ok/okay" -> "certo", "setup" -> "configuração",
+         "coach/trainer" -> "treinador(a)", "challenge" -> "desafio", "task" -> "tarefa".
 
 💬 ESTILO:
 - Frases curtas
@@ -467,7 +581,7 @@ Vou te enviar o texto agora! Primeiro, veja o texto e ouça eu lendo. Depois, vo
 📚 CONTEXTO:
 {"\n".join(relevant_context[-3:]) if relevant_context else "Início da conversa"}
 
-Responda mantendo foco em alfabetização."""),
+Responda mantendo foco em alfabetização e em português do Brasil simples."""),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}")
         ])

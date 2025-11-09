@@ -10,6 +10,7 @@ import requests
 # from libs.OpenAI import client
 from dotenv import load_dotenv
 from services.conversation_manager import conversation_manager
+import re
 
 load_dotenv()
 
@@ -23,6 +24,37 @@ router = APIRouter(prefix="/audio", tags=["Áudio"])
 os.makedirs("storage/audios", exist_ok=True)
 os.makedirs("storage/transcricoes", exist_ok=True)
 os.makedirs("storage/respostas", exist_ok=True)
+
+
+def _sanitize_ptbr(texto: str) -> str:
+    """
+    Sanitiza termos estrangeiros comuns para equivalentes em PT-BR simples.
+    Mantém o restante do texto intacto.
+    """
+    if not isinstance(texto, str):
+        return texto
+
+    substitutions = {
+        r"\bfeedback\b": "retorno",
+        r"\bok\b": "certo",
+        r"\bokay\b": "certo",
+        r"\bsetup\b": "configuração",
+        r"\bapp\b": "aplicativo",
+        r"\blogin\b": "entrar",
+        r"\blogout\b": "sair",
+        r"\bcoach\b": "treinador",
+        r"\bchallenge\b": "desafio",
+        r"\bscore\b": "pontuação",
+        r"\btask\b": "tarefa",
+        r"\btrainer\b": "treinador",
+        r"\bprint\b": "imagem",
+        r"\bscan\b": "digitalizar",
+    }
+
+    result = texto
+    for pattern, repl in substitutions.items():
+        result = re.sub(pattern, repl, result, flags=re.IGNORECASE)
+    return result
 
 
 @router.post("/processar/")
@@ -47,11 +79,24 @@ async def processar_audio(numero: str = Form(...), audio: UploadFile = File(...)
     with open(texto_path, "w", encoding="utf-8") as f:
         f.write(texto_usuario)
 
-    # 2) Resposta IA
+    # 2) Resposta IA (sempre em PT-BR simples, sem estrangeirismos)
     resposta_texto = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": texto_usuario}]
-    ).choices[0].message.content
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Você é a Apo.IA. Responda SEMPRE em português do Brasil, com frases curtas,"
+                    " palavras simples e tom acolhedor. NUNCA use palavras estrangeiras (como 'feedback',"
+                    " 'ok', 'setup', 'coach'). Sempre substitua por termos comuns em PT-BR."
+                ),
+            },
+            {"role": "user", "content": texto_usuario},
+        ],
+        temperature=0.6,
+    ).choices[0].message.content or ""
+
+    resposta_texto = _sanitize_ptbr(resposta_texto)
 
     # 3) Sintetiza voz
     sintetizado = client.audio.speech.create(
@@ -143,6 +188,7 @@ async def processar_audio_base64(data: AudioBase64Request):
         # 2) Resposta da Apo.IA usando RAG com contexto
         print("Gerando resposta com Apo.IA usando RAG...")
         resposta_texto = conversation_manager.generate_response(data.numero, texto_usuario)
+        resposta_texto = _sanitize_ptbr(resposta_texto)
         print(f"Resposta gerada: {resposta_texto}")
         
         # 3) Verifica se deve gerar imagem de teste de leitura
