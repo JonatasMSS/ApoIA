@@ -1,174 +1,97 @@
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
-from langchain_community.vectorstores import FAISS
+"""
+Gerenciador de Conversas com Sistema RAG para Alfabetização Apo.IA (REFATORADO)
+
+Este módulo orquestra o sistema de alfabetização, delegando responsabilidades
+para módulos especializados:
+
+- text_detection: Detecção de nome e idade
+- literacy_evaluator: Avaliação de alfabetização
+- user_state_manager: Gerenciamento de estado
+- conversation_history: Histórico de mensagens
+- vectorstore_manager: Busca vetorial (RAG)
+
+Responsabilidade principal:
+- Coordenar fluxo de alfabetização em 5 fases
+- Gerar respostas contextualizadas com IA
+
+Autor: Equipe Apo.IA
+Data: Novembro 2024
+"""
+
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from datetime import datetime
+from typing import Dict, List
 import os
-import json
-from typing import Dict, List, Optional
 from dotenv import load_dotenv
+
+# Importa módulos especializados
+from services.text_detection import detect_name_and_age
+from services.literacy_evaluator import (
+    analyze_reading_level, 
+    get_test_words, 
+    generate_test_image_prompt
+)
+from services.reading_exercises import (
+    get_reading_text,
+    analyze_reading_attempt,
+    generate_feedback_message
+)
+from services.user_state_manager import UserStateManager
+from services.conversation_history import ConversationHistoryManager
+from services.vectorstore_manager import VectorStoreManager
 
 load_dotenv()
 
+
 class ConversationManager:
     """
-    Gerenciador de conversas com RAG usando LangChain.
-    Mantém contexto da conversa e histórico por usuário.
-    Sistema de alfabetização Apo.IA com fluxo estruturado.
-    """
+    Gerenciador Central de Conversas com RAG.
     
+    Orquestra o sistema de alfabetização Apo.IA, coordenando:
+    1. Fluxo estruturado em 5 fases
+    2. Detecção de informações pessoais
+    3. Avaliação de alfabetização
+    4. Geração de respostas contextualizadas
+    5. Persistência de dados
+    """
+
     def __init__(self):
+        """Inicializa gerenciador e componentes."""
+        # Configuração da OpenAI
         self.api_key = os.getenv("OPENAI_API_KEY")
-        self.embeddings = OpenAIEmbeddings(api_key=self.api_key)
         self.llm = ChatOpenAI(
             model="gpt-4o-mini",
             temperature=0.7,
             api_key=self.api_key
         )
         
-        # Armazena vectorstores e históricos por usuário
-        self.user_vectorstores: Dict[str, FAISS] = {}
-        self.user_histories: Dict[str, List[Dict]] = {}
-        self.user_states: Dict[str, Dict] = {}  # Estado da conversa por usuário
-        
-        # Diretórios para persistência
-        self.storage_dir = "storage/conversations"
-        self.vectorstore_dir = f"{self.storage_dir}/vectorstores"
-        self.history_dir = f"{self.storage_dir}/histories"
-        self.state_dir = f"{self.storage_dir}/states"
-        
-        os.makedirs(self.vectorstore_dir, exist_ok=True)
-        os.makedirs(self.history_dir, exist_ok=True)
-        os.makedirs(self.state_dir, exist_ok=True)
-        
+        # Inicializa módulos especializados
+        self.state_manager = UserStateManager()
+        self.history_manager = ConversationHistoryManager()
+        self.vectorstore_manager = VectorStoreManager(self.api_key)
+    
+    # ==================== MÉTODOS AUXILIARES ====================
+    
     def _get_user_id(self, numero: str) -> str:
-        """Extrai ID do usuário do número de telefone"""
+        """Extrai ID limpo do número de telefone/WhatsApp."""
         return numero.split("@")[0] if "@" in numero else numero
     
-    def _load_user_history(self, user_id: str) -> List[Dict]:
-        """Carrega histórico de conversa do usuário"""
-        history_file = f"{self.history_dir}/{user_id}.json"
-        if os.path.exists(history_file):
-            with open(history_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        return []
-    
-    def _save_user_history(self, user_id: str):
-        """Salva histórico de conversa do usuário"""
-        history_file = f"{self.history_dir}/{user_id}.json"
-        with open(history_file, 'w', encoding='utf-8') as f:
-            json.dump(self.user_histories.get(user_id, []), f, ensure_ascii=False, indent=2)
-    
-    def _load_user_state(self, user_id: str) -> Dict:
-        """Carrega estado do usuário (fase da conversa, dados coletados, etc)"""
-        state_file = f"{self.state_dir}/{user_id}.json"
-        
-        # Estado padrão para novo usuário
-        default_state = {
-            "fase": "inicial",  # inicial, aguardando_nome, teste_leitura, personalizado
-            "nome": None,
-            "idade": None,
-            "nivel_alfabetizacao": None,
-            "palavras_teste": [],
-            "acertos": 0,
-            "total_testes": 0,
-            "ultimo_acesso": datetime.now().isoformat()
-        }
-        
-        if os.path.exists(state_file):
-            with open(state_file, 'r', encoding='utf-8') as f:
-                state = json.load(f)
-                
-            # Verifica se último acesso foi há mais de 24 horas (conversa antiga)
-            if "ultimo_acesso" in state:
-                try:
-                    from datetime import timedelta
-                    ultimo_acesso = datetime.fromisoformat(state["ultimo_acesso"])
-                    tempo_decorrido = datetime.now() - ultimo_acesso
-                    
-                    # Se passou mais de 24 horas, reseta para nova conversa
-                    if tempo_decorrido > timedelta(hours=24):
-                        print(f"⚠️ Conversa antiga detectada (mais de 24h). Resetando estado.")
-                        return default_state
-                except:
-                    pass
-            
-            # Atualiza último acesso
-            state["ultimo_acesso"] = datetime.now().isoformat()
-            return state
-            
-        return default_state
-    
-    def _save_user_state(self, user_id: str):
-        """Salva estado do usuário"""
-        state_file = f"{self.state_dir}/{user_id}.json"
-        with open(state_file, 'w', encoding='utf-8') as f:
-            json.dump(self.user_states.get(user_id, {}), f, ensure_ascii=False, indent=2)
-    
-    def _get_user_state(self, user_id: str) -> Dict:
-        """Obtém estado atual do usuário"""
-        if user_id not in self.user_states:
-            self.user_states[user_id] = self._load_user_state(user_id)
-        
-        # IMPORTANTE: Se está na fase "inicial", garante que estado seja limpo
-        state = self.user_states[user_id]
-        if state["fase"] == "inicial":
-            # Reseta informações pessoais para garantir novo início
-            state["nome"] = None
-            state["idade"] = None
-            state["nivel_alfabetizacao"] = None
-            state["palavras_teste"] = []
-            state["acertos"] = 0
-            state["total_testes"] = 0
-            
-        return state
-    
-    def _get_or_create_vectorstore(self, user_id: str) -> FAISS:
-        """Obtém ou cria vectorstore para o usuário"""
-        if user_id in self.user_vectorstores:
-            return self.user_vectorstores[user_id]
-        
-        vectorstore_path = f"{self.vectorstore_dir}/{user_id}"
-        
-        # Tenta carregar vectorstore existente
-        if os.path.exists(f"{vectorstore_path}/index.faiss"):
-            try:
-                vectorstore = FAISS.load_local(
-                    vectorstore_path,
-                    self.embeddings,
-                    allow_dangerous_deserialization=True
-                )
-                self.user_vectorstores[user_id] = vectorstore
-                print(f"✅ Vectorstore carregado para usuário {user_id}")
-                return vectorstore
-            except Exception as e:
-                print(f"⚠️ Erro ao carregar vectorstore: {e}. Criando novo...")
-        
-        # Cria novo vectorstore com documento inicial
-        initial_doc = f"Início da conversa com o usuário {user_id} em {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        vectorstore = FAISS.from_texts(
-            [initial_doc],
-            self.embeddings,
-            metadatas=[{"timestamp": datetime.now().isoformat(), "type": "system"}]
-        )
-        
-        # Salva vectorstore
-        vectorstore.save_local(vectorstore_path)
-        self.user_vectorstores[user_id] = vectorstore
-        
-        print(f"✅ Novo vectorstore criado para usuário {user_id}")
-        return vectorstore
-    
     def _get_chat_history(self, user_id: str, limit: int = 10) -> List:
-        """Obtém histórico de chat como lista de mensagens LangChain"""
-        if user_id not in self.user_histories:
-            self.user_histories[user_id] = self._load_user_history(user_id)
+        """
+        Obtém histórico formatado para LangChain.
         
-        history = self.user_histories[user_id]
+        Args:
+            user_id: ID do usuário
+            limit: Quantidade de mensagens recentes
+            
+        Returns:
+            Lista de mensagens LangChain
+        """
+        history = self.history_manager.get_history(user_id, limit=limit)
         messages = []
         
-        # Converte últimas mensagens para formato LangChain
-        for msg in history[-limit:]:
+        for msg in history:
             if msg["role"] == "user":
                 messages.append(HumanMessage(content=msg["content"]))
             else:
@@ -176,384 +99,447 @@ class ConversationManager:
         
         return messages
     
-    def add_message_to_context(self, user_id: str, message: str, is_user: bool = True):
-        """Adiciona mensagem ao contexto vetorial"""
-        vectorstore = self._get_or_create_vectorstore(user_id)
+    def _add_message_to_context(self, user_id: str, message: str, is_user: bool = True):
+        """
+        Adiciona mensagem ao contexto completo.
         
-        timestamp = datetime.now().isoformat()
-        role = "user" if is_user else "assistant"
+        Args:
+            user_id: ID do usuário
+            message: Conteúdo da mensagem
+            is_user: True se mensagem do usuário
+        """
+        # Adiciona ao histórico
+        self.history_manager.add_message(user_id, message, is_user)
         
         # Adiciona ao vectorstore
-        vectorstore.add_texts(
-            [message],
-            metadatas=[{
-                "timestamp": timestamp,
-                "role": role,
-                "type": "message"
-            }]
-        )
-        
-        # Salva vectorstore atualizado
-        vectorstore_path = f"{self.vectorstore_dir}/{user_id}"
-        vectorstore.save_local(vectorstore_path)
-        
-        # Adiciona ao histórico
-        if user_id not in self.user_histories:
-            self.user_histories[user_id] = []
-        
-        self.user_histories[user_id].append({
-            "role": role,
-            "content": message,
-            "timestamp": timestamp
-        })
-        
-        self._save_user_history(user_id)
+        self.vectorstore_manager.add_message(user_id, message, is_user)
     
-    def get_relevant_context(self, user_id: str, query: str, k: int = 5) -> List[str]:
-        """Recupera contexto relevante do histórico"""
-        vectorstore = self._get_or_create_vectorstore(user_id)
+    def _should_restart_conversation(self, state: Dict, user_message: str, user_id: str) -> bool:
+        """
+        Verifica se deve reiniciar conversa.
         
-        # Busca documentos relevantes
-        docs = vectorstore.similarity_search(query, k=k)
+        Returns:
+            True se deve reiniciar
+        """
+        saudacoes = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'hey', 'ei']
+        mensagem_lower = user_message.lower().strip()
         
-        return [doc.page_content for doc in docs]
+        if state["fase"] == "personalizado" and mensagem_lower in saudacoes:
+            history = self.history_manager.get_history(user_id)
+            return len(history) == 0
+        
+        return False
     
-    def _detect_name_and_age(self, user_message: str) -> Dict:
-        """Detecta nome e idade na mensagem do usuário"""
-        import re
-        
-        print(f"🔍 Detectando nome e idade em: '{user_message}'")
-        
-        # Detecta idade (números entre 1 e 120)
-        idade = None
-        idade_patterns = [
-            r'\b(\d{1,3})\s*anos?\b',  # "25 anos" ou "25 ano"
-            r'\btenho\s+(\d{1,3})\b',   # "tenho 25"
-            r'\b(\d{1,3})\s*$',         # número no final
-            r'^\s*(\d{1,3})\s*$'        # apenas o número
-        ]
-        
-        for pattern in idade_patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                idade_temp = int(match.group(1))
-                if 1 <= idade_temp <= 120:
-                    idade = idade_temp
-                    print(f"  ✓ Idade encontrada: {idade}")
-                    break
-        
-        # Detecta nome
-        nome = None
-        patterns = [
-            # Padrões explícitos com verbos (prioridade máxima)
-            r'(?:me chamo|meu nome é|nome é|eu sou o|eu sou a|sou o|sou a|sou)\s+([A-Za-zÀ-ÿ]+(?:\s+[A-Za-zÀ-ÿ]+)?)\s*(?:e\s+|,|$)',
-            # Nome seguido de "e tenho" ou "," ou final
-            r'([A-Za-zÀ-ÿ]{3,})\s+(?:e\s+tenho|,\s*tenho)',
-            # Nome no início capitalizado (seguido de "e" ou vírgula ou final)
-            r'^([A-Z][a-zà-ÿ]+(?:\s+[A-Z][a-zà-ÿ]+)?)\s*(?:e\s+|,|$)',
-            # Apenas uma palavra capitalizada (pode ser nome sozinho)
-            r'^\s*([A-Z][a-zà-ÿ]{2,})\s*$',
-            # Qualquer palavra capitalizada com 3+ letras (último recurso)
-            r'\b([A-Z][a-zà-ÿ]{2,})\b'
-        ]
-        
-        palavras_ignorar = ['Oi', 'Olá', 'Bom', 'Boa', 'Tenho', 'Anos', 'Ano', 'Meu', 'Minha', 'Nome', 'Idade', 'Sou', 'E']
-        
-        for pattern in patterns:
-            match = re.search(pattern, user_message, re.IGNORECASE)
-            if match:
-                nome_temp = match.group(1).strip()
-                # Capitaliza o nome corretamente
-                nome_temp = ' '.join(word.capitalize() for word in nome_temp.split())
-                
-                # Evita palavras comuns
-                if nome_temp not in palavras_ignorar and len(nome_temp) > 1:
-                    nome = nome_temp
-                    print(f"  ✓ Nome encontrado: {nome}")
-                    break
-        
-        if not nome:
-            print(f"  ✗ Nome NÃO encontrado")
-        if not idade:
-            print(f"  ✗ Idade NÃO encontrada")
-            
-        return {"nome": nome, "idade": idade}
-    
-    def _analyze_reading_level(self, user_response: str, expected_words: List[str]) -> Dict:
-        """Analisa o nível de alfabetização baseado na resposta"""
-        user_words = user_response.lower().split()
-        expected_set = set(w.lower() for w in expected_words)
-        
-        # Conta acertos
-        acertos = sum(1 for word in user_words if word in expected_set)
-        total = len(expected_words)
-        taxa_acerto = (acertos / total * 100) if total > 0 else 0
-        
-        # Define nível
-        if taxa_acerto >= 80:
-            nivel = "avançado"
-        elif taxa_acerto >= 50:
-            nivel = "intermediário"
-        else:
-            nivel = "iniciante"
-        
-        return {
-            "nivel": nivel,
-            "acertos": acertos,
-            "total": total,
-            "taxa_acerto": taxa_acerto
-        }
+    # ==================== GERAÇÃO DE RESPOSTA (NÚCLEO) ====================
     
     def generate_response(self, numero: str, user_message: str) -> str:
         """
-        Gera resposta seguindo EXATAMENTE o fluxo da Apo.IA para alfabetização.
+        Gera resposta contextualizada seguindo fluxo de alfabetização.
         
-        FLUXO OBRIGATÓRIO:
-        1. Saudação inicial → Solicita nome e idade
-        2. Coleta nome e idade → Envia imagem de teste
-        3. Aguarda resposta do teste → Avalia nível
-        4. Personaliza aprendizado → Continua ensino
+        🎯 FLUXO (5 FASES):
+        1. Inicial → Saudação e solicitação de dados
+        2. Aguardando Nome → Coleta nome e idade
+        3. Solicitar Teste → Marca para envio de imagem
+        4. Aguardando Teste → Avalia nível de alfabetização
+        5. Personalizado → Ensino adaptado com RAG
         
         Args:
-            numero: Número do WhatsApp do usuário
+            numero: Número do WhatsApp
             user_message: Mensagem do usuário
             
         Returns:
             Resposta gerada pela IA
         """
         user_id = self._get_user_id(numero)
-        state = self._get_user_state(user_id)
+        state = self.state_manager.get_user_state(user_id)
         
+        # Log
         print(f"\n{'='*60}")
-        print(f"🤖 GERANDO RESPOSTA PARA USUÁRIO: {user_id}")
-        print(f"📝 Mensagem recebida: '{user_message}'")
-        print(f"📊 Fase atual do usuário: '{state['fase']}'")
-        print(f"📋 Estado completo: {state}")
+        print(f"🤖 GERANDO RESPOSTA: {user_id}")
+        print(f"📝 Mensagem: '{user_message}'")
+        print(f"📊 Fase: '{state['fase']}'")
         print(f"{'='*60}\n")
         
-        # Detecta se é uma saudação inicial em conversa já existente
-        saudacoes_iniciais = ['oi', 'olá', 'ola', 'bom dia', 'boa tarde', 'boa noite', 'hey', 'ei']
-        mensagem_lower = user_message.lower().strip()
+        # Verifica se deve reiniciar
+        if self._should_restart_conversation(state, user_message, user_id):
+            print("   ✓ Reiniciando conversa...")
+            state = self.state_manager._get_default_state()
+            self.state_manager.user_states[user_id] = state
+            self.state_manager.save_user_state(user_id)
         
-        # Se está em fase personalizado e manda APENAS uma saudação simples, pode querer reiniciar
-        if state["fase"] == "personalizado" and mensagem_lower in saudacoes_iniciais:
-            print("⚠️ Saudação inicial detectada em conversa existente.")
-            print("   Verificando se deve reiniciar...")
+        # Adiciona mensagem ao contexto
+        self._add_message_to_context(user_id, user_message, is_user=True)
+        
+        # Rota para fase específica
+        resposta_texto = self._route_by_phase(state, user_message, user_id)
+        
+        # Adiciona resposta ao contexto
+        self._add_message_to_context(user_id, resposta_texto, is_user=False)
+        
+        print(f"✅ Resposta gerada e salva")
+        print(f"{'='*60}\n")
+        
+        return resposta_texto
+    
+    def _route_by_phase(self, state: Dict, user_message: str, user_id: str) -> str:
+        """
+        Roteia para handler da fase atual.
+        
+        Fases:
+        1. inicial - Saudação
+        2. aguardando_nome - Coleta nome/idade
+        3. solicitar_teste_leitura - Prepara teste
+        4. aguardando_teste_leitura - Avalia teste
+        5. exercicios_leitura - Exercícios de leitura em voz alta
+        6. aguardando_leitura_audio - Esperando áudio de leitura
+        7. personalizado - Conversação livre adaptada
+        
+        Args:
+            state: Estado do usuário
+            user_message: Mensagem recebida
+            user_id: ID do usuário
             
-            # Verifica histórico recente - se não há mensagens recentes, reinicia
-            history = self.user_histories.get(user_id, [])
-            if len(history) == 0:
-                print("   ✓ Sem histórico recente. REINICIANDO conversa.")
-                state["fase"] = "inicial"
-                state["nome"] = None
-                state["idade"] = None
-                state["nivel_alfabetizacao"] = None
-                state["palavras_teste"] = []
-                state["acertos"] = 0
-                state["total_testes"] = 0
-                self._save_user_state(user_id)
+        Returns:
+            Resposta gerada
+        """
+        fase = state["fase"]
         
-        # Adiciona mensagem do usuário ao contexto
-        self.add_message_to_context(user_id, user_message, is_user=True)
+        if fase == "inicial":
+            return self._handle_initial_phase(state, user_id)
+        elif fase == "aguardando_nome":
+            return self._handle_name_collection_phase(state, user_message, user_id)
+        elif fase == "solicitar_teste_leitura":
+            return self._handle_test_request_phase(state, user_id)
+        elif fase == "aguardando_teste_leitura":
+            return self._handle_test_evaluation_phase(state, user_message, user_id)
+        elif fase == "exercicios_leitura":
+            return self._handle_reading_exercises_phase(state, user_id)
+        elif fase == "aguardando_leitura_audio":
+            return self._handle_reading_evaluation_phase(state, user_message, user_id)
+        else:  # personalizado
+            return self._handle_personalized_phase(state, user_message, user_id)
+    
+    # ==================== HANDLERS DE FASES ====================
+    
+    def _handle_initial_phase(self, state: Dict, user_id: str) -> str:
+        """Fase 1: Saudação inicial."""
+        print("✅ FASE 1: Saudação")
         
-        # Fluxo baseado na fase
-        resposta_texto = ""
-        
-        # 🟢 FASE 1: SAUDAÇÃO INICIAL
-        if state["fase"] == "inicial":
-            print("✅ FASE 1: Enviando saudação inicial")
-            resposta_texto = """Oi! Eu sou a Apo.IA, sua assistente para te ajudar a aprender a ler e escrever de um jeito fácil e divertido!
+        resposta = """Oi! Eu sou a Apo.IA, sua assistente para te ajudar a aprender a ler e escrever de um jeito fácil e divertido!
 
 Eu vou te acompanhar passo a passo, ok? 😊
 
 Pra começar, me conta seu nome e sua idade, por favor."""
-            
-            state["fase"] = "aguardando_nome"
-            self._save_user_state(user_id)
         
-        # 🟢 FASE 2: COLETANDO NOME E IDADE
-        elif state["fase"] == "aguardando_nome":
-            print("✅ FASE 2: Coletando nome e idade")
-            info = self._detect_name_and_age(user_message)
+        state["fase"] = "aguardando_nome"
+        self.state_manager.save_user_state(user_id)
+        
+        return resposta
+    
+    def _handle_name_collection_phase(self, state: Dict, user_message: str, user_id: str) -> str:
+        """Fase 2: Coleta de nome e idade."""
+        print("✅ FASE 2: Coletando dados")
+        
+        # Detecta informações
+        info = detect_name_and_age(user_message)
+        
+        # Atualiza estado
+        if info["nome"] and not state["nome"]:
+            state["nome"] = info["nome"]
+            print(f"   ✓ Nome: {state['nome']}")
+        if info["idade"] and not state["idade"]:
+            state["idade"] = info["idade"]
+            print(f"   ✓ Idade: {state['idade']}")
+        
+        # Verifica se tem ambos
+        if state["nome"] and state["idade"]:
+            print(f"✅ Dados completos! Avançando para teste...")
             
-            # Atualiza apenas se detectou novos valores
-            if info["nome"] and not state["nome"]:
-                state["nome"] = info["nome"]
-                print(f"✅ Nome detectado e salvo: {state['nome']}")
-            if info["idade"] and not state["idade"]:
-                state["idade"] = info["idade"]
-                print(f"✅ Idade detectada e salva: {state['idade']}")
-            
-            # Verifica se tem AMBOS nome e idade
-            if state["nome"] and state["idade"]:
-                print(f"✅✅ DADOS COMPLETOS! Nome: {state['nome']}, Idade: {state['idade']}")
-                print("🎨 AVANÇANDO PARA FASE 3: Teste de leitura")
-                
-                resposta_texto = f"""Prazer em te conhecer, {state["nome"]}! 🤗
+            resposta = f"""Prazer em te conhecer, {state["nome"]}! 🤗
 
 Agora eu quero ver como você lê essas palavras.
 
 Vou enviar uma imagem com algumas palavras pra você. Depois, diga ou escreva quais palavras você vê na imagem, tá bom?"""
-                
-                state["fase"] = "solicitar_teste_leitura"
-                state["palavras_teste"] = ["CASA", "SOL", "PATO", "BOLA"]
-                self._save_user_state(user_id)
             
-            # Tem apenas nome - pede idade
-            elif state["nome"] and not state["idade"]:
-                print(f"ℹ️ Tem nome ({state['nome']}), falta idade")
-                resposta_texto = f"Legal, {state['nome']}! E quantos anos você tem?"
-                self._save_user_state(user_id)
+            state["fase"] = "solicitar_teste_leitura"
+            state["palavras_teste"] = get_test_words("basico")
+            self.state_manager.save_user_state(user_id)
             
-            # Tem apenas idade - pede nome
-            elif state["idade"] and not state["nome"]:
-                print(f"ℹ️ Tem idade ({state['idade']}), falta nome")
-                resposta_texto = f"Você tem {state['idade']} anos, que legal! E qual é o seu nome?"
-                self._save_user_state(user_id)
-            
-            # Não tem nada ainda
-            else:
-                print("⚠️ Nome e idade NÃO detectados na mensagem")
-                resposta_texto = "Me conta seu nome e sua idade, por favor. Pode ser assim: 'Meu nome é João e tenho 25 anos' 😊"
+            return resposta
         
-        # 🟢 FASE 3: IMAGEM SERÁ ENVIADA (marcador)
-        elif state["fase"] == "solicitar_teste_leitura":
-            print("✅ FASE 3: Preparando para enviar imagem de teste")
-            # Esta mensagem explica o teste. O áudio.py vai detectar e enviar a imagem
-            resposta_texto = f"Agora eu quero ver como você lê essas palavras. Vou enviar uma imagem com algumas palavras pra você. Depois, diga ou escreva quais palavras você vê na imagem, tá bom? 😊"
-            # NÃO muda de fase aqui - deixa para should_generate_test_image fazer isso
+        # Parcial - solicita faltante
+        elif state["nome"]:
+            resposta = f"Legal, {state['nome']}! E quantos anos você tem?"
+        elif state["idade"]:
+            resposta = f"Você tem {state['idade']} anos, que legal! E qual é o seu nome?"
+        else:
+            resposta = "Me conta seu nome e sua idade, por favor. Pode ser assim: 'Meu nome é João e tenho 25 anos' 😊"
         
-        # 🟢 FASE 4: AGUARDANDO RESPOSTA DO TESTE
-        elif state["fase"] == "aguardando_teste_leitura":
-            print("✅ FASE 4: Analisando resposta do teste de leitura")
-            print(f"   Palavras esperadas: {state['palavras_teste']}")
-            print(f"   Resposta do usuário: '{user_message}'")
-            
-            resultado = self._analyze_reading_level(user_message, state["palavras_teste"])
-            
-            state["nivel_alfabetizacao"] = resultado["nivel"]
-            state["acertos"] = resultado["acertos"]
-            state["total_testes"] = resultado["total"]
-            state["fase"] = "personalizado"
-            self._save_user_state(user_id)
-            
-            print(f"📊 RESULTADO DO TESTE:")
-            print(f"   Acertos: {resultado['acertos']}/{resultado['total']}")
-            print(f"   Taxa: {resultado['taxa_acerto']:.1f}%")
-            print(f"   Nível: {resultado['nivel']}")
-            print(f"🎓 AVANÇANDO PARA FASE 5: Aprendizado personalizado")
-            
-            resposta_texto = f"""Muito bem, {state["nome"]}! 👏
+        self.state_manager.save_user_state(user_id)
+        return resposta
+    
+    def _handle_test_request_phase(self, state: Dict, user_id: str) -> str:
+        """Fase 3: Marcador para envio de imagem."""
+        print("✅ FASE 3: Preparando teste")
+        
+        resposta = "Agora eu quero ver como você lê essas palavras. Vou enviar uma imagem com algumas palavras pra você. Depois, diga ou escreva quais palavras você vê na imagem, tá bom? 😊"
+        
+        # Não muda fase aqui (mudança feita em should_generate_test_image)
+        return resposta
+    
+    def _handle_test_evaluation_phase(self, state: Dict, user_message: str, user_id: str) -> str:
+        """Fase 4: Avaliação do teste."""
+        print("✅ FASE 4: Avaliando teste")
+        print(f"   Esperadas: {state['palavras_teste']}")
+        print(f"   Resposta: '{user_message}'")
+        
+        # Analisa resposta
+        resultado = analyze_reading_level(user_message, state["palavras_teste"])
+        
+        # Atualiza estado
+        state["nivel_alfabetizacao"] = resultado["nivel"]
+        state["acertos"] = resultado["acertos"]
+        state["total_testes"] = resultado["total"]
+        state["exercicio_numero"] = 1  # Inicia contador de exercícios
+        state["fase"] = "exercicios_leitura"  # Vai para exercícios de leitura
+        self.state_manager.save_user_state(user_id)
+        
+        print(f"📊 Resultado: {resultado['acertos']}/{resultado['total']} - {resultado['nivel'].upper()}")
+        print(f"📖 Avançando para exercícios de leitura")
+        
+        resposta = f"""Muito bem, {state["nome"]}! 👏
 
 Você acertou {resultado["acertos"]} de {resultado["total"]} palavras!
 
-Eu já entendi o seu nível. Agora vou preparar leituras em áudio e exercícios personalizados pra te ajudar a evoluir rapidinho!
+Seu nível é: {resultado["nivel"].upper()}
 
-Podemos começar? 😄"""
+Agora vamos praticar leitura em voz alta! 📚
+
+Vou te enviar um texto bem simples. Você vai:
+1️⃣ Ver o texto escrito (imagem)
+2️⃣ Ouvir eu lendo o texto (áudio)
+3️⃣ Tentar ler o texto em voz alta
+
+Depois eu vou te dar um feedback sobre como você leu! 😊
+
+Pronto para começar?"""
         
-        # 🟢 FASE 5: APRENDIZADO PERSONALIZADO
+        return resposta
+    
+    def _handle_reading_exercises_phase(self, state: Dict, user_id: str) -> str:
+        """Fase 5: Exercícios de leitura em voz alta."""
+        print("✅ FASE 5: Exercícios de leitura")
+        
+        # Pega texto baseado no nível
+        exercicio_num = state.get("exercicio_numero", 1)
+        texto_info = get_reading_text(state["nivel_alfabetizacao"], exercicio_num)
+        
+        # Salva texto atual no estado
+        state["texto_atual"] = texto_info["texto"]
+        state["texto_titulo"] = texto_info["titulo"]
+        state["fase"] = "aguardando_leitura_audio"
+        self.state_manager.save_user_state(user_id)
+        
+        print(f"   📖 Texto: {texto_info['titulo']}")
+        print(f"   📊 Nível: {texto_info['dificuldade']}")
+        
+        resposta = f"""📚 Exercício de Leitura #{exercicio_num}
+
+Título: "{texto_info["titulo"]}"
+
+Vou te enviar o texto agora! Primeiro, veja o texto e ouça eu lendo. Depois, você tenta ler em voz alta, tá bom? 😊
+
+(O texto e o áudio serão enviados a seguir)"""
+        
+        return resposta
+    
+    def _handle_reading_evaluation_phase(self, state: Dict, user_message: str, user_id: str) -> str:
+        """Fase 6: Avaliação da leitura em voz alta."""
+        print("✅ FASE 6: Avaliando leitura")
+        
+        texto_esperado = state.get("texto_atual", "")
+        texto_titulo = state.get("texto_titulo", "Texto")
+        
+        print(f"   📖 Esperado: {texto_esperado[:50]}...")
+        print(f"   🎤 Lido: {user_message[:50]}...")
+        
+        # Analisa tentativa de leitura
+        resultado = analyze_reading_attempt(texto_esperado, user_message)
+        
+        # Gera feedback
+        texto_info = {"titulo": texto_titulo}
+        feedback = generate_feedback_message(resultado, texto_info)
+        
+        print(f"   📊 Similaridade: {resultado['similaridade']}%")
+        print(f"   ⭐ Avaliação: {resultado['avaliacao']}")
+        
+        # Pergunta se quer continuar ou ir para conversação livre
+        exercicio_num = state.get("exercicio_numero", 1)
+        
+        if resultado['avaliacao'] in ["excelente", "bom"]:
+            # Oferece próximo exercício
+            state["exercicio_numero"] = exercicio_num + 1
+            state["fase"] = "exercicios_leitura"
+            
+            feedback += f"\n\n🎯 Quer fazer mais um exercício de leitura?"
+            feedback += f"\n\nDiga 'sim' para continuar ou 'não' se quiser conversar livremente!"
         else:
-            print("✅ FASE 5: Aprendizado personalizado com IA")
-            print(f"   Nome: {state.get('nome', 'N/A')}")
-            print(f"   Nível: {state.get('nivel_alfabetizacao', 'N/A')}")
+            # Oferece repetir o mesmo exercício
+            feedback += f"\n\n🔄 Quer tentar ler este texto de novo?"
+            feedback += f"\n\nDiga 'sim' para tentar novamente ou 'não' para ir para o próximo!"
             
-            # Busca contexto relevante (limitado para evitar contexto antigo demais)
-            relevant_context = self.get_relevant_context(user_id, user_message, k=3)
-            # Usa apenas mensagens RECENTES do histórico (últimas 5)
-            chat_history = self._get_chat_history(user_id, limit=5)
+            # Se disser não, vai para próximo
+            if "nao" in user_message.lower() or "não" in user_message.lower():
+                state["exercicio_numero"] = exercicio_num + 1
+                state["fase"] = "exercicios_leitura"
+            else:
+                state["fase"] = "exercicios_leitura"  # Volta para enviar o mesmo texto
+        
+        self.state_manager.save_user_state(user_id)
+        return feedback
+    
+    def _handle_personalized_phase(self, state: Dict, user_message: str, user_id: str) -> str:
+        """Fase 5: Aprendizado personalizado com RAG."""
+        print("✅ FASE 5: Aprendizado personalizado")
+        print(f"   Nome: {state.get('nome')}, Nível: {state.get('nivel_alfabetizacao')}")
+        
+        # Recupera contexto relevante
+        relevant_context = self.vectorstore_manager.get_relevant_context(user_id, user_message, k=3)
+        chat_history = self._get_chat_history(user_id, limit=5)
+        
+        # Prompt especializado
+        prompt = self._build_literacy_prompt(state, relevant_context)
+        
+        # Gera resposta
+        chain = prompt | self.llm
+        
+        try:
+            print("   🤖 Gerando resposta com GPT-4...")
+            response = chain.invoke({
+                "chat_history": chat_history,
+                "question": user_message
+            })
+            print("   ✅ Resposta gerada")
+            return response.content
             
-            # Prompt FOCADO EM ALFABETIZAÇÃO
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", f"""Você é a Apo.IA, assistente de alfabetização. 
+        except Exception as e:
+            print(f"   ❌ Erro: {e}")
+            return f"Desculpa, {state.get('nome', 'amigo(a)')}! Tive um probleminha aqui. Pode repetir? 😊"
+    
+    def _build_literacy_prompt(self, state: Dict, relevant_context: List[str]) -> ChatPromptTemplate:
+        """
+        Constrói prompt especializado em alfabetização.
+        
+        Args:
+            state: Estado do usuário
+            relevant_context: Contexto relevante do RAG
+            
+        Returns:
+            Template de prompt
+        """
+        return ChatPromptTemplate.from_messages([
+            ("system", f"""Você é a Apo.IA, assistente especializada em alfabetização. 
 
 🎯 MISSÃO: Ajudar {state.get('nome', 'o usuário')} a aprender a ler e escrever.
 
-📊 DADOS DO ALUNO:
+📊 PERFIL DO ALUNO:
 - Nome: {state.get('nome', 'não informado')}
 - Idade: {state.get('idade', 'não informada')}
 - Nível: {state.get('nivel_alfabetizacao', 'iniciante')}
 - Acertos no teste: {state.get('acertos', 0)}/{state.get('total_testes', 4)}
 
-🎓 REGRAS OBRIGATÓRIAS:
-1. Use linguagem MUITO SIMPLES e clara
-2. Seja SEMPRE encorajadora e positiva
-3. Foque em ensinar leitura e escrita
+🎓 DIRETRIZES:
+1. Use linguagem MUITO SIMPLES
+2. Seja SEMPRE encorajadora
+3. Foque em leitura e escrita prática
 4. Use emojis para conexão emocional
-5. Dê exemplos práticos do dia a dia
-6. Celebre cada pequeno progresso
+5. Exemplos do cotidiano
+6. Celebre progressos
 7. Adapte ao nível do aluno
+8. Ensine fonética quando apropriado
 
 💬 ESTILO:
-- Frases curtas e diretas
-- Palavras simples e comuns
-- Tom amigável como uma professora paciente
-- Evite termos técnicos
+- Frases curtas
+- Vocabulário simples
+- Tom de professora paciente
+- Evite jargões
 
-CONTEXTO RECENTE:
-{"\n".join(relevant_context[-3:]) if relevant_context else "Primeira conversa"}
+📚 CONTEXTO:
+{"\n".join(relevant_context[-3:]) if relevant_context else "Início da conversa"}
 
-Responda de forma educativa, mantendo o foco em alfabetização."""),
-                MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{question}")
-            ])
-            
-            # Gera resposta
-            chain = prompt | self.llm
-            
-            try:
-                response = chain.invoke({
-                    "chat_history": chat_history,
-                    "question": user_message
-                })
-                
-                resposta_texto = response.content
-                
-            except Exception as e:
-                print(f"❌ Erro ao gerar resposta: {e}")
-                # Fallback amigável
-                resposta_texto = f"Desculpa, {state.get('nome', 'amigo(a)')}! Tive um probleminha aqui. Pode repetir o que você disse? 😊"
-        
-        # Adiciona resposta ao contexto (para todas as fases)
-        self.add_message_to_context(user_id, resposta_texto, is_user=False)
-        
-        print(f"✅ Resposta gerada com sucesso")
-        return resposta_texto
+Responda mantendo foco em alfabetização."""),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{question}")
+        ])
+    
+    # ==================== MÉTODOS PÚBLICOS ====================
     
     def get_conversation_summary(self, numero: str, limit: int = 10) -> List[Dict]:
-        """Retorna resumo da conversa do usuário"""
+        """Retorna resumo do histórico."""
         user_id = self._get_user_id(numero)
-        history = self.user_histories.get(user_id, [])
-        return history[-limit:]
+        return self.history_manager.get_history(user_id, limit=limit)
     
     def should_generate_test_image(self, numero: str) -> Dict:
         """
-        Verifica se deve gerar imagem de teste de leitura
+        Verifica se deve gerar imagem de teste.
         
         Returns:
-            Dict com 'should_generate' (bool), 'words' (list), 'prompt' (str) se aplicável
+            Dict com should_generate, words, prompt
         """
         user_id = self._get_user_id(numero)
-        state = self._get_user_state(user_id)
+        state = self.state_manager.get_user_state(user_id)
         
         if state["fase"] == "solicitar_teste_leitura":
-            # Muda para aguardando resposta
-            state["fase"] = "aguardando_teste_leitura"
-            self._save_user_state(user_id)
+            print("🎨 Gerando imagem de teste")
             
-            words = state.get("palavras_teste", ["CASA", "SOL", "PATO", "BOLA"])
+            # Avança fase
+            state["fase"] = "aguardando_teste_leitura"
+            self.state_manager.save_user_state(user_id)
+            
+            words = state.get("palavras_teste", get_test_words())
+            prompt = generate_test_image_prompt(words)
             
             return {
                 "should_generate": True,
                 "words": words,
-                "prompt": f"Crie uma imagem educativa e clara para alfabetização. Mostre 4 palavras simples escritas em letras GRANDES, COLORIDAS e bem legíveis (fonte tipo Comic Sans ou similar, fácil de ler). As palavras devem estar dispostas verticalmente ou em uma grade 2x2. Use cores diferentes para cada palavra e adicione pequenos ícones ilustrativos ao lado de cada palavra. As palavras são: {', '.join(words)}. Fundo branco ou muito claro."
+                "prompt": prompt
+            }
+        
+        return {"should_generate": False}
+    
+    def should_generate_reading_text(self, numero: str) -> Dict:
+        """
+        Verifica se deve gerar texto de exercício de leitura.
+        
+        Returns:
+            Dict com should_generate, texto, titulo, audio_text
+        """
+        user_id = self._get_user_id(numero)
+        state = self.state_manager.get_user_state(user_id)
+        
+        if state["fase"] == "aguardando_leitura_audio":
+            print("📖 Gerando texto de leitura")
+            
+            # Pega o texto atual do estado
+            texto = state.get("texto_atual", "")
+            titulo = state.get("texto_titulo", "Texto")
+            exercicio_num = state.get("exercicio_numero", 1)
+            
+            return {
+                "should_generate": True,
+                "texto": texto,
+                "titulo": titulo,
+                "exercicio_num": exercicio_num,
+                "audio_text": texto  # Texto para TTS ler
             }
         
         return {"should_generate": False}
     
     def get_user_info(self, numero: str) -> Dict:
-        """Retorna informações do usuário"""
+        """Retorna informações do usuário."""
         user_id = self._get_user_id(numero)
-        state = self._get_user_state(user_id)
+        state = self.state_manager.get_user_state(user_id)
+        
         return {
             "user_id": user_id,
             "fase": state.get("fase"),
@@ -563,47 +549,19 @@ Responda de forma educativa, mantendo o foco em alfabetização."""),
         }
     
     def clear_user_context(self, numero: str):
-        """Limpa contexto de um usuário específico"""
-        import shutil
-        
+        """Limpa contexto completo do usuário."""
         user_id = self._get_user_id(numero)
         
-        print(f"🗑️ Limpando contexto do usuário {user_id}...")
+        print(f"\n🗑️ LIMPANDO CONTEXTO: {user_id}")
+        print("="*60)
         
-        # Remove do cache em memória
-        if user_id in self.user_vectorstores:
-            del self.user_vectorstores[user_id]
-            print(f"  ✓ Vectorstore removido da memória")
+        self.vectorstore_manager.clear_vectorstore(user_id)
+        self.history_manager.clear_history(user_id)
+        self.state_manager.clear_user_state(user_id)
         
-        if user_id in self.user_histories:
-            del self.user_histories[user_id]
-            print(f"  ✓ Histórico removido da memória")
-        
-        if user_id in self.user_states:
-            del self.user_states[user_id]
-            print(f"  ✓ Estado removido da memória")
-        
-        # Remove arquivos físicos
-        # Remove vectorstore
-        vectorstore_path = f"{self.vectorstore_dir}/{user_id}"
-        if os.path.exists(vectorstore_path):
-            shutil.rmtree(vectorstore_path)
-            print(f"  ✓ Vectorstore deletado do disco")
-        
-        # Remove histórico
-        history_file = f"{self.history_dir}/{user_id}.json"
-        if os.path.exists(history_file):
-            os.remove(history_file)
-            print(f"  ✓ Histórico deletado do disco")
-        
-        # Remove estado
-        state_file = f"{self.state_dir}/{user_id}.json"
-        if os.path.exists(state_file):
-            os.remove(state_file)
-            print(f"  ✓ Estado deletado do disco")
-        
-        print(f"✅ Contexto do usuário {user_id} totalmente limpo!")
+        print("="*60)
+        print(f"✅ Contexto limpo!\n")
 
 
-# Instância global
+# ==================== INSTÂNCIA GLOBAL ====================
 conversation_manager = ConversationManager()

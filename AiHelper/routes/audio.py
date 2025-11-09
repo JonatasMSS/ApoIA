@@ -151,20 +151,9 @@ async def processar_audio_base64(data: AudioBase64Request):
         if test_info["should_generate"]:
             print("🎨 Gerando imagem de teste de leitura...")
             
-            # Gerar a imagem usando DALL-E 3
-            image_response = client.images.generate(
-                model="dall-e-3",
-                prompt=test_info["prompt"],
-                size="1024x1024",
-                quality="hd",
-                n=1
-            )
-            
-            # Baixar a imagem e codificar em base64
-            img_url = image_response.data[0].url
-            img_response = requests.get(img_url)
-            img_response.raise_for_status()
-            img_base64 = base64.b64encode(img_response.content).decode('utf-8')
+            # Gerar a imagem usando PIL (texto perfeito, sem alucinações)
+            from services.literacy_evaluator import generate_test_image
+            img_base64 = generate_test_image(test_info["words"])
             
             print("✅ Imagem de teste gerada com sucesso.")
             
@@ -188,8 +177,55 @@ async def processar_audio_base64(data: AudioBase64Request):
                 "resposta_texto": resposta_texto,
                 "resposta_audio_base64": f"data:audio/wav;base64,{audio_base64}",
                 "imagem_base64": f"data:image/png;base64,{img_base64}",
-                "revised_prompt": image_response.data[0].revised_prompt,
                 "is_test_image": True
+            }
+        
+        # 3.5) Verifica se deve gerar texto de exercício de leitura
+        reading_info = conversation_manager.should_generate_reading_text(data.numero)
+        
+        if reading_info["should_generate"]:
+            print(f"📖 Gerando exercício de leitura #{reading_info['exercicio_num']}...")
+            
+            # Gerar imagem com o texto
+            from services.literacy_evaluator import generate_reading_text_image
+            img_base64 = generate_reading_text_image(reading_info["titulo"], reading_info["texto"])
+            
+            print("✅ Imagem do texto gerada com sucesso.")
+            
+            # Gera áudio da IA lendo o texto
+            print("🔊 Gerando áudio da IA lendo o texto...")
+            sintetizado_texto = client.audio.speech.create(
+                model="tts-1",
+                voice="alloy",
+                input=reading_info["audio_text"],
+                speed=0.9  # Mais devagar para facilitar acompanhamento
+            )
+            audio_texto = sintetizado_texto.read()
+            audio_texto_base64 = base64.b64encode(audio_texto).decode('utf-8')
+            
+            # Gera também o áudio da resposta explicativa
+            sintetizado_resposta = client.audio.speech.create(
+                model="tts-1",
+                voice="alloy",
+                input=resposta_texto
+            )
+            audio_resposta = sintetizado_resposta.read()
+            audio_resposta_base64 = base64.b64encode(audio_resposta).decode('utf-8')
+            
+            print("✅ Áudios gerados.")
+            
+            # Retorna com imagem do texto, áudio da IA lendo E áudio da explicação
+            return {
+                "status": "ok",
+                "tipo": "exercicio_leitura",
+                "usuario": data.numero,
+                "texto_usuario": texto_usuario,
+                "resposta_texto": resposta_texto,
+                "resposta_audio_base64": f"data:audio/wav;base64,{audio_resposta_base64}",
+                "imagem_base64": f"data:image/png;base64,{img_base64}",
+                "texto_audio_base64": f"data:audio/wav;base64,{audio_texto_base64}",
+                "is_reading_exercise": True,
+                "texto_titulo": reading_info["titulo"]
             }
 
         # 4) Sintetiza voz

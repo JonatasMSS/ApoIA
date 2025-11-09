@@ -51,7 +51,30 @@ client.on("message", async (message: Message) => {
           const data = await sendAudioBase64(message, message.from);
           
           // Verifica o tipo de resposta
-          if (data.tipo === 'imagem_com_audio') {
+          if (data.tipo === 'exercicio_leitura') {
+            console.log('📖 Enviando exercício de leitura');
+            
+            // 1) Envia o áudio explicativo
+            const audioExplicacao = data.resposta_audio_base64!.split(',')[1];
+            const audioExplicacaoMedia = new MessageMedia('audio/wav', audioExplicacao);
+            await chat.sendMessage(audioExplicacaoMedia);
+            
+            // 2) Envia a imagem com o texto
+            const imageBase64 = data.imagem_base64!.split(',')[1];
+            const imageMedia = new MessageMedia('image/png', imageBase64);
+            await chat.sendMessage(imageMedia, { 
+              caption: `📖 ${data.texto_titulo || 'Texto para Leitura'}\n\nAcompanhe o texto na imagem enquanto ouve o áudio! 👇` 
+            });
+            
+            // 3) Envia o áudio da IA lendo o texto
+            const audioTexto = (data as any).texto_audio_base64!.split(',')[1];
+            const audioTextoMedia = new MessageMedia('audio/wav', audioTexto);
+            await chat.sendMessage(audioTextoMedia);
+            
+            // 4) Instrução final
+            await chat.sendMessage("🎤 Agora é sua vez! Tente ler o texto em voz alta e me envie um áudio! 😊");
+            
+          } else if (data.tipo === 'imagem_com_audio') {
             console.log('🎨🔊 Enviando imagem de teste + áudio explicativo');
             
             // 1) Envia o áudio explicativo primeiro
