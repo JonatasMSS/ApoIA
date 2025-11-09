@@ -1,5 +1,17 @@
 import type { Message } from 'whatsapp-web.js';
-export async function sendAudioBase64(message: Message, numero: string = "unknown"): Promise<any> {
+
+interface AudioResponse {
+    status: string;
+    tipo: 'audio' | 'imagem';
+    usuario: string;
+    texto_usuario: string;
+    resposta_texto: string;
+    resposta_audio_base64?: string;
+    imagem_base64?: string;
+    revised_prompt?: string;
+}
+
+export async function sendAudioBase64(message: Message, numero: string = "unknown"): Promise<AudioResponse> {
     if (message.type !== 'ptt') {
         throw new Error('Message is not an audio');
     }
@@ -24,6 +36,6 @@ export async function sendAudioBase64(message: Message, numero: string = "unknow
         throw new Error(`HTTP error! status: ${response.status}, statusText: ${response.statusText}, body: ${errorText}`);
     }
 
-    const data = await response.json();
-    return data.resposta_audio_base64.split(',')[1];
+    const data: AudioResponse = await response.json();
+    return data;
 }

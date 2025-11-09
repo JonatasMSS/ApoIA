@@ -1,10 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 from openai import OpenAI
 from datetime import datetime
 import os
 import base64
 import io
+import traceback
+import requests
 # from libs.OpenAI import client
 from dotenv import load_dotenv
 
@@ -131,7 +133,72 @@ async def processar_audio_base64(data: AudioBase64Request):
             f.write(texto_usuario)
         print(f"Transcrição salva em {texto_path}")
 
-        # 2) Resposta IA
+        # 2) Detectar se o usuário quer gerar uma imagem
+        print("Verificando se é solicitação de imagem...")
+        print(f"Texto do usuário: '{texto_usuario}'")
+        
+        texto_lower = texto_usuario.lower()
+        
+        # Palavras-chave mais flexíveis - detecta variações
+        keywords_imagem = [
+            "gere", "gera", "gerar", "gerada", "gerado",
+            "crie", "cria", "criar", "criada", "criado",
+            "faça", "faz", "fazer", "faça",
+            "desenhe", "desenha", "desenhar",
+            "ilustre", "ilustra", "ilustrar",
+            "mostre", "mostra", "mostrar",
+            "visualize", "visualiza", "visualizar",
+            "quero uma imagem", "quero ver"
+        ]
+        
+        palavras_contexto = ["imagem", "foto", "figura", "desenho", "ilustração", "picture"]
+        
+        # Detecta se tem palavra-chave E palavra de contexto
+        tem_acao = any(keyword in texto_lower for keyword in keywords_imagem)
+        tem_contexto = any(contexto in texto_lower for contexto in palavras_contexto)
+        
+        solicita_imagem = tem_acao and tem_contexto
+        
+        print(f"Tem ação de geração: {tem_acao}, Tem contexto de imagem: {tem_contexto}")
+        print(f"Solicita imagem: {solicita_imagem}")
+        
+        if solicita_imagem:
+            print("🎨 Solicitação de imagem detectada!")
+            # Extrair o prompt para a imagem
+            prompt_imagem = texto_usuario
+            
+            # Gerar a imagem usando DALL-E 3
+            print(f"Gerando imagem com DALL-E 3: {prompt_imagem}")
+            image_response = client.images.generate(
+                model="dall-e-3",
+                prompt=prompt_imagem,
+                size="1024x1024",
+                quality="hd",
+                n=1
+            )
+            
+            # Baixar a imagem e codificar em base64
+            import requests
+            img_url = image_response.data[0].url
+            img_response = requests.get(img_url)
+            img_response.raise_for_status()
+            img_base64 = base64.b64encode(img_response.content).decode('utf-8')
+            
+            # Resposta em texto sobre a imagem
+            resposta_texto = f"Imagem gerada com sucesso! Prompt revisado: {image_response.data[0].revised_prompt}"
+            
+            print("Imagem gerada com sucesso.")
+            return {
+                "status": "ok",
+                "tipo": "imagem",
+                "usuario": data.numero,
+                "texto_usuario": texto_usuario,
+                "resposta_texto": resposta_texto,
+                "imagem_base64": f"data:image/png;base64,{img_base64}",
+                "revised_prompt": image_response.data[0].revised_prompt
+            }
+        
+        # 3) Resposta IA normal (áudio)
         print("Gerando resposta com GPT-4o-mini...")
         resposta_texto = client.chat.completions.create(
             model="gpt-4o-mini",
@@ -139,7 +206,7 @@ async def processar_audio_base64(data: AudioBase64Request):
         ).choices[0].message.content
         print(f"Resposta gerada: {resposta_texto}")
 
-        # 3) Sintetiza voz
+        # 4) Sintetiza voz
         print("Sintetizando voz com TTS...")
         sintetizado = client.audio.speech.create(
             model="tts-1",
@@ -163,14 +230,14 @@ async def processar_audio_base64(data: AudioBase64Request):
         print("Processamento concluído com sucesso.")
         return {
             "status": "ok",
+            "tipo": "audio",
             "usuario": data.numero,
             "texto_usuario": texto_usuario,
             "resposta_texto": resposta_texto,
             "resposta_audio_base64": f"data:audio/wav;base64,{audio_base64}"
         }
     except Exception as e:
-        print(f"Erro durante o processamento: {str(e)}")
-        return {
-            "status": "error",
-            "message": str(e)
-        }
+        print(f": {str(e)}")
+        print(f"Stack trace completo:")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))

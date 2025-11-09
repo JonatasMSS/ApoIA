@@ -44,11 +44,23 @@ client.on("message", async (message: Message) => {
         if (message.hasMedia && message.type === 'ptt') {
           console.log(`📩 Mensagem de áudio recebida de ${message.from}`);
           await chat.sendMessage("Aguarde um pouco, processando seu áudio...");
-          const data = await sendAudioBase64(message, message.from)
-          const media = new MessageMedia('audio/wav', data);
-          await chat.sendMessage(media);
           
-            
+          const data = await sendAudioBase64(message, message.from);
+          
+          // Verifica o tipo de resposta
+          if (data.tipo === 'imagem') {
+            console.log('🎨 Resposta é uma imagem');
+            // Envia a imagem
+            const imageBase64 = data.imagem_base64!.split(',')[1];
+            const imageMedia = new MessageMedia('image/png', imageBase64);
+            await chat.sendMessage(imageMedia, { caption: data.resposta_texto });
+          } else {
+            console.log('🎵 Resposta é um áudio');
+            // Envia o áudio
+            const audioBase64 = data.resposta_audio_base64!.split(',')[1];
+            const audioMedia = new MessageMedia('audio/wav', audioBase64);
+            await chat.sendMessage(audioMedia);
+          }
         }
     }
 });
