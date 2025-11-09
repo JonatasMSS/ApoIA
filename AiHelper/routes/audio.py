@@ -1,26 +1,23 @@
-from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import APIRouter, UploadFile, File, Form
 from pydub import AudioSegment
 from openai import OpenAI
 from datetime import datetime
 import os
 from libs.OpenAI import client
-
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# Cliente OpenAI (usa OPENAI_API_KEY do ambiente)
-# client = OpenAI(api_key="sk-1vYexqLQgVrnQJIo-unIv7sjSYikU4rBeiNl_ao6zcT3BlbkFJuIcQZfH1ewSiEfEt3gklVIfAaaGhWH3tU8hsBoa20A")
-
-app = FastAPI()
+# Cria o router (não uma nova instância de FastAPI)
+router = APIRouter(prefix="/audio", tags=["Áudio"])
 
 # Garante pastas
 os.makedirs("storage/audios", exist_ok=True)
 os.makedirs("storage/transcricoes", exist_ok=True)
 os.makedirs("storage/respostas", exist_ok=True)
 
-@app.post("/processar_audio/")
+@router.post("/processar/")
 async def processar_audio(numero: str = Form(...), audio: UploadFile = File(...)):
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     input_ogg = f"storage/audios/input_{timestamp}.ogg"
@@ -69,7 +66,7 @@ async def processar_audio(numero: str = Form(...), audio: UploadFile = File(...)
         "resposta_audio": resposta_wav
     }
 
-@app.post("/falar/")
+@router.post("/falar/")
 async def falar(texto: str = Form(...)):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     resposta_wav = f"storage/respostas/teste_{timestamp}.wav"
