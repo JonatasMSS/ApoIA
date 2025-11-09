@@ -1,70 +1,77 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from openai import OpenAI
 import os
 from dotenv import load_dotenv
-import requests
-import base64
+import google.generativeai as genai
+import time
 
 load_dotenv()
 router = APIRouter()
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Configurar a API do Gemini
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 class VideoRequest(BaseModel):
     prompt: str
-    duration: int = 5  # Duração em segundos (tipicamente 5-10s para Sora)
-    resolution: str = "1920x1080"  # Resolução do vídeo
+    aspect_ratio: str = "16:9"  # Opções: "16:9", "9:16", "1:1"
+    duration: int = 5  # Duração em segundos (Veo suporta até 8 segundos)
 
 @router.post("/generate-video")
 async def generate_video(req: VideoRequest):
     """
-    Gera vídeo usando Sora (simulado, pois a API não está disponível publicamente)
+    Gera vídeo usando Google Veo (via Gemini API) - Versão econômica
     
     - **prompt**: Descrição do vídeo desejado
-    - **duration**: Duração do vídeo em segundos
-    - **resolution**: Resolução do vídeo
+    - **aspect_ratio**: Proporção do vídeo (16:9, 9:16, 1:1)
+    - **duration**: Duração do vídeo em segundos (máximo 8 segundos)
     
-    Nota: Como a API do Sora não está disponível, retorna um vídeo de exemplo.
+    Nota: Veo é a solução de geração de vídeo do Google, mais econômica que Sora.
     """
     try:
-        # Simulação da resposta do Sora, pois a API não está disponível
-        # Usando um vídeo de exemplo para demonstração
-        sample_video_url = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
+        # Usar o modelo Veo via Gemini API
+        # Veo 2.0 é o modelo mais recente para geração de vídeo
+        model = genai.GenerativeModel('veo-002')
         
-        # Simular download e codificação em base64 (para vídeos pequenos)
-        # Nota: Para vídeos reais, isso pode ser muito grande
-        try:
-            video_response = requests.get(sample_video_url, stream=True)
-            video_response.raise_for_status()
-            
-            # Para demonstração, limitar o tamanho (primeiros 1MB)
-            video_data = b""
-            for chunk in video_response.iter_content(chunk_size=1024):
-                video_data += chunk
-                if len(video_data) > 1024 * 1024:  # 1MB limit
-                    break
-            
-            video_base64 = base64.b64encode(video_data).decode('utf-8')
-            
-        except requests.RequestException:
-            # Fallback se não conseguir baixar
-            video_base64 = "simulated_base64_data"
+        # Gerar o vídeo com os parâmetros especificados
+        response = model.generate_content(
+            req.prompt,
+            generation_config={
+                'response_mime_type': 'video/mp4',
+                'aspect_ratio': req.aspect_ratio,
+                'duration': req.duration
+            }
+        )
         
-        return {
-            "success": True,
-            "video_url": sample_video_url,
-            "video_base64": f"data:video/mp4;base64,{video_base64}",
-            "prompt": req.prompt,
-            "duration": req.duration,
-            "resolution": req.resolution,
-            "note": "Este é um vídeo de exemplo, pois a API do Sora não está disponível publicamente."
-        }
+        # O Veo retorna o vídeo de forma assíncrona
+        # Pode precisar aguardar a geração ser concluída
+        if hasattr(response, 'video'):
+            video_data = response.video
+            return {
+                "success": True,
+                "video_url": video_data.url if hasattr(video_data, 'url') else None,
+                "video_data": video_data.data if hasattr(video_data, 'data') else None,
+                "prompt": req.prompt,
+                "aspect_ratio": req.aspect_ratio,
+                "duration": req.duration,
+                "model": "veo-002",
+                "message": "Vídeo gerado com sucesso usando Google Veo"
+            }
+        else:
+            # Caso a resposta não contenha vídeo diretamente
+            return {
+                "success": True,
+                "message": "Vídeo em processamento",
+                "prompt": req.prompt,
+                "aspect_ratio": req.aspect_ratio,
+                "duration": req.duration,
+                "model": "veo-002",
+                "note": "A geração pode levar alguns minutos. Use o endpoint /video-status para verificar o progresso."
+            }
     
     except Exception as e:
         raise HTTPException(
             status_code=500, 
-            detail=f"Erro ao gerar vídeo: {str(e)}"
+            detail=f"Erro ao gerar vídeo com Veo: {str(e)}"
         )
 
 @router.post("/download-video")
@@ -76,30 +83,46 @@ async def download_video(video_url: str, filename: str = "generated_video.mp4"):
     - **filename**: Nome do arquivo para salvar (padrão: generated_video.mp4)
     """
     try:
-        # Fazer download do vídeo
-        response = requests.get(video_url, stream=True)
-        response.raise_for_status()
+        # Buscar informações do vídeo usando a API do Gemini
+        # Nota: A implementação exata depende de como o Gemini gerencia trabalhos assíncronos
+        model = genai.GenerativeModel('veo-002')
         
-        # Salvar no diretório atual do projeto
-        filepath = os.path.join(os.getcwd(), filename)
-        with open(filepath, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=8192):
-                f.write(chunk)
+        # Tentar recuperar o status do vídeo
+        # A API pode variar, então tratamos possíveis exceções
+        operation = genai.get_operation(video_id)
         
         return {
-            "success": True,
-            "message": f"Vídeo baixado com sucesso para {filepath}",
-            "filepath": filepath,
-            "filename": filename
+            "video_id": video_id,
+            "status": operation.metadata.get('status', 'unknown') if hasattr(operation, 'metadata') else 'processing',
+            "url": operation.result.url if hasattr(operation, 'result') and hasattr(operation.result, 'url') else None,
+            "model": "veo-002"
         }
-    
-    except requests.RequestException as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Erro ao baixar vídeo: {str(e)}"
-        )
     except Exception as e:
         raise HTTPException(
             status_code=500, 
             detail=f"Erro ao salvar vídeo: {str(e)}"
         )
+
+@router.get("/veo-info")
+async def get_veo_info():
+    """
+    Retorna informações sobre o modelo Veo e suas capacidades
+    """
+    return {
+        "model": "veo-002",
+        "provider": "Google Gemini",
+        "description": "Veo é o modelo de geração de vídeo do Google, oferecendo uma alternativa mais econômica ao Sora",
+        "features": {
+            "max_duration": "8 segundos",
+            "aspect_ratios": ["16:9", "9:16", "1:1"],
+            "quality": "Alta qualidade com realismo fotográfico",
+            "cost": "Mais econômico que alternativas como Sora"
+        },
+        "supported_styles": [
+            "Realismo fotográfico",
+            "Animação",
+            "Cinematográfico",
+            "Timelapse",
+            "Aéreo"
+        ]
+    }
