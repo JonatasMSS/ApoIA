@@ -16,6 +16,28 @@ from typing import Dict, List
 from PIL import Image, ImageDraw, ImageFont
 import io
 import base64
+import string
+import unicodedata
+
+
+def _normalize_word(word: str) -> str:
+    """
+    Normaliza uma palavra removendo pontuação e acentos.
+    
+    Args:
+        word: Palavra para normalizar
+        
+    Returns:
+        Palavra normalizada (lowercase, sem pontuação, sem acentos)
+    """
+    # Remove pontuação
+    word = word.translate(str.maketrans('', '', string.punctuation))
+    # Lowercase
+    word = word.lower()
+    # Remove acentos
+    word = unicodedata.normalize('NFD', word)
+    word = ''.join(c for c in word if unicodedata.category(c) != 'Mn')
+    return word.strip()
 
 
 def analyze_reading_level(user_response: str, expected_words: List[str]) -> Dict:
@@ -23,9 +45,10 @@ def analyze_reading_level(user_response: str, expected_words: List[str]) -> Dict
     Analisa nível de alfabetização baseado no teste de leitura.
     
     Processo:
-    1. Compara palavras ditas vs esperadas
-    2. Calcula taxa de acerto
-    3. Classifica em níveis
+    1. Normaliza palavras (remove pontuação e acentos)
+    2. Compara palavras ditas vs esperadas
+    3. Calcula taxa de acerto
+    4. Classifica em níveis
     
     Classificação:
     - ≥80%: Avançado (lê bem)
@@ -39,9 +62,16 @@ def analyze_reading_level(user_response: str, expected_words: List[str]) -> Dict
     Returns:
         Dict com {nivel, acertos, total, taxa_acerto}
     """
-    # Normaliza para comparação
-    user_words = user_response.lower().split()
-    expected_set = set(w.lower() for w in expected_words)
+    # Normaliza palavras do usuário (remove pontuação, acentos)
+    user_words_raw = user_response.split()
+    user_words = [_normalize_word(w) for w in user_words_raw if _normalize_word(w)]
+    
+    # Normaliza palavras esperadas
+    expected_set = set(_normalize_word(w) for w in expected_words)
+    
+    # Debug info
+    print(f"   🔍 Palavras do usuário normalizadas: {user_words}")
+    print(f"   🎯 Palavras esperadas normalizadas: {expected_set}")
     
     # Conta acertos (palavras corretas mencionadas)
     acertos = sum(1 for word in user_words if word in expected_set)
