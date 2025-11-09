@@ -161,22 +161,7 @@ HOST=0.0.0.0
 PORT=8000
 ```
 
-### 2. Supabase Database
-
-Crie a tabela de usuários no Supabase:
-
-```sql
-CREATE TABLE users (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  age INTEGER NOT NULL,
-  learning_rate TEXT,
-  first_time BOOLEAN DEFAULT TRUE,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-```
-
-### 3. Bot WhatsApp (opcional: .env)
+### 2. Bot WhatsApp (opcional: .env)
 
 Crie o arquivo `.env` na pasta `Whatsbot/` (se necessário):
 
@@ -308,21 +293,6 @@ Devs_impacto_16/
 - `POST /users/` - Criar usuário
 - `GET /users/{id}` - Buscar usuário
 
-### Vídeo (Simulado)
-- `POST /generate-video` - Simula geração de vídeo
-- `POST /download-video` - Download de vídeo por URL
-
-## 🧪 Testes
-
-```powershell
-# Backend
-cd AiHelper
-python test_api.py
-
-# Limpar dados de usuário específico
-python limpar_usuario.py
-```
-
 ## 🤝 Contribuindo
 
 1. Fork o projeto
@@ -339,7 +309,6 @@ python limpar_usuario.py
 - **Rate Limiting**: Configure limites adequados no Fastify
 
 ### Performance
-- O sistema usa cache Redis para otimizar requisições
 - FAISS armazena vetores localmente para busca rápida
 - Históricos são salvos em JSON para persistência
 
@@ -362,5 +331,3 @@ Este projeto foi desenvolvido para fins educacionais como parte do programa Devs
 Equipe Apo.IA - Novembro 2024
 
 ---
-
-**Documentação da API**: `http://localhost:8000/docs` (após iniciar o servidor)
