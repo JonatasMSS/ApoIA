@@ -49,13 +49,11 @@ client.on("message", async (message: Message) => {
           
           // Verifica o tipo de resposta
           if (data.tipo === 'imagem') {
-            console.log('🎨 Resposta é uma imagem');
             // Envia a imagem
             const imageBase64 = data.imagem_base64!.split(',')[1];
             const imageMedia = new MessageMedia('image/png', imageBase64);
             await chat.sendMessage(imageMedia, { caption: data.resposta_texto });
           } else {
-            console.log('🎵 Resposta é um áudio');
             // Envia o áudio
             const audioBase64 = data.resposta_audio_base64!.split(',')[1];
             const audioMedia = new MessageMedia('audio/wav', audioBase64);

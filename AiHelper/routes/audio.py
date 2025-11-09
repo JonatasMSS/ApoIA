@@ -9,6 +9,7 @@ import traceback
 import requests
 # from libs.OpenAI import client
 from dotenv import load_dotenv
+from services.conversation_manager import conversation_manager
 
 load_dotenv()
 
@@ -198,12 +199,9 @@ async def processar_audio_base64(data: AudioBase64Request):
                 "revised_prompt": image_response.data[0].revised_prompt
             }
         
-        # 3) Resposta IA normal (áudio)
-        print("Gerando resposta com GPT-4o-mini...")
-        resposta_texto = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": texto_usuario}]
-        ).choices[0].message.content
+        # 3) Resposta IA normal (áudio) usando RAG com contexto
+        print("Gerando resposta com GPT-4o-mini usando RAG...")
+        resposta_texto = conversation_manager.generate_response(data.numero, texto_usuario)
         print(f"Resposta gerada: {resposta_texto}")
 
         # 4) Sintetiza voz
@@ -240,4 +238,38 @@ async def processar_audio_base64(data: AudioBase64Request):
         print(f": {str(e)}")
         print(f"Stack trace completo:")
         traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Novas rotas para gerenciar contexto da conversa
+
+@router.get("/historico/{numero}")
+async def obter_historico(numero: str, limit: int = 10):
+    """
+    Obtém o histórico de conversa de um usuário
+    """
+    try:
+        historico = conversation_manager.get_conversation_summary(numero, limit)
+        return {
+            "status": "ok",
+            "numero": numero,
+            "total_mensagens": len(historico),
+            "historico": historico
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/limpar_contexto/{numero}")
+async def limpar_contexto(numero: str):
+    """
+    Limpa o contexto e histórico de um usuário
+    """
+    try:
+        conversation_manager.clear_user_context(numero)
+        return {
+            "status": "ok",
+            "message": f"Contexto do usuário {numero} limpo com sucesso"
+        }
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
