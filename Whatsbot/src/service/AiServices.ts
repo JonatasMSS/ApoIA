@@ -2,14 +2,16 @@ import type { Message } from 'whatsapp-web.js';
 
 interface AudioResponse {
     status: string;
-    tipo: 'audio' | 'imagem' | 'imagem_com_audio';
+    tipo: 'audio' | 'imagem' | 'imagem_com_audio' | 'exercicio_leitura';
     usuario: string;
     texto_usuario: string;
     resposta_texto: string;
     resposta_audio_base64?: string;
     imagem_base64?: string;
-    revised_prompt?: string;
+    texto_audio_base64?: string;  // Áudio da IA lendo o texto (exercícios)
+    texto_titulo?: string;  // Título do texto de leitura
     is_test_image?: boolean;  // Flag para imagens de teste de alfabetização
+    is_reading_exercise?: boolean;  // Flag para exercícios de leitura
 }
 
 export async function sendAudioBase64(message: Message, numero: string = "unknown"): Promise<AudioResponse> {

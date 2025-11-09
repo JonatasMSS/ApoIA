@@ -197,6 +197,87 @@ def generate_test_image(words: List[str]) -> str:
     return img_base64
 
 
+def generate_reading_text_image(titulo: str, texto: str) -> str:
+    """
+    Gera uma imagem com texto de leitura formatado.
+    Usa PIL para garantir texto perfeito e legível.
+    
+    Args:
+        titulo: Título do texto
+        texto: Texto completo para exibir
+        
+    Returns:
+        String base64 da imagem PNG gerada
+    """
+    # Configurações da imagem
+    img_width = 1024
+    img_height = 1024
+    background_color = (255, 255, 255)  # Branco
+    title_color = (220, 20, 60)  # Vermelho para título
+    text_color = (50, 50, 50)  # Cinza escuro para texto
+    
+    # Criar imagem
+    img = Image.new('RGB', (img_width, img_height), background_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Tentar carregar fontes
+    try:
+        font_title = ImageFont.truetype("C:/Windows/Fonts/arialbd.ttf", 60)  # Bold para título
+        font_text = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 45)  # Normal para texto
+    except:
+        try:
+            font_title = ImageFont.truetype("arial.ttf", 60)
+            font_text = ImageFont.truetype("arial.ttf", 45)
+        except:
+            font_title = ImageFont.load_default()
+            font_text = ImageFont.load_default()
+    
+    # Desenhar título centralizado no topo
+    bbox_title = draw.textbbox((0, 0), titulo, font=font_title)
+    title_width = bbox_title[2] - bbox_title[0]
+    x_title = (img_width - title_width) // 2
+    y_title = 80
+    
+    # Sombra do título
+    draw.text((x_title + 2, y_title + 2), titulo, fill=(200, 200, 200), font=font_title)
+    # Título
+    draw.text((x_title, y_title), titulo, fill=title_color, font=font_title)
+    
+    # Desenhar linha separadora
+    line_y = y_title + 80
+    draw.line([(150, line_y), (img_width - 150, line_y)], fill=(200, 200, 200), width=3)
+    
+    # Quebrar texto em linhas (máximo ~30 caracteres por linha para legibilidade)
+    palavras = texto.split()
+    linhas = []
+    linha_atual = ""
+    
+    for palavra in palavras:
+        if len(linha_atual + palavra) < 35:
+            linha_atual += palavra + " "
+        else:
+            linhas.append(linha_atual.strip())
+            linha_atual = palavra + " "
+    if linha_atual:
+        linhas.append(linha_atual.strip())
+    
+    # Desenhar texto linha por linha
+    y_text = line_y + 80
+    line_spacing = 70
+    margin_x = 100
+    
+    for linha in linhas:
+        draw.text((margin_x, y_text), linha, fill=text_color, font=font_text)
+        y_text += line_spacing
+    
+    # Converter para base64
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    
+    return img_base64
+
+
 def generate_test_image_prompt(words: List[str]) -> str:
     """
     DEPRECATED: Mantido para compatibilidade.

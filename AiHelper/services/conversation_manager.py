@@ -32,6 +32,11 @@ from services.literacy_evaluator import (
     get_test_words, 
     generate_test_image_prompt
 )
+from services.reading_exercises import (
+    get_reading_text,
+    analyze_reading_attempt,
+    generate_feedback_message
+)
 from services.user_state_manager import UserStateManager
 from services.conversation_history import ConversationHistoryManager
 from services.vectorstore_manager import VectorStoreManager
@@ -180,6 +185,15 @@ class ConversationManager:
         """
         Roteia para handler da fase atual.
         
+        Fases:
+        1. inicial - Saudação
+        2. aguardando_nome - Coleta nome/idade
+        3. solicitar_teste_leitura - Prepara teste
+        4. aguardando_teste_leitura - Avalia teste
+        5. exercicios_leitura - Exercícios de leitura em voz alta
+        6. aguardando_leitura_audio - Esperando áudio de leitura
+        7. personalizado - Conversação livre adaptada
+        
         Args:
             state: Estado do usuário
             user_message: Mensagem recebida
@@ -198,6 +212,10 @@ class ConversationManager:
             return self._handle_test_request_phase(state, user_id)
         elif fase == "aguardando_teste_leitura":
             return self._handle_test_evaluation_phase(state, user_message, user_id)
+        elif fase == "exercicios_leitura":
+            return self._handle_reading_exercises_phase(state, user_id)
+        elif fase == "aguardando_leitura_audio":
+            return self._handle_reading_evaluation_phase(state, user_message, user_id)
         else:  # personalizado
             return self._handle_personalized_phase(state, user_message, user_id)
     
@@ -282,21 +300,103 @@ Vou enviar uma imagem com algumas palavras pra você. Depois, diga ou escreva qu
         state["nivel_alfabetizacao"] = resultado["nivel"]
         state["acertos"] = resultado["acertos"]
         state["total_testes"] = resultado["total"]
-        state["fase"] = "personalizado"
+        state["exercicio_numero"] = 1  # Inicia contador de exercícios
+        state["fase"] = "exercicios_leitura"  # Vai para exercícios de leitura
         self.state_manager.save_user_state(user_id)
         
         print(f"📊 Resultado: {resultado['acertos']}/{resultado['total']} - {resultado['nivel'].upper()}")
-        print(f"🎓 Avançando para fase personalizada")
+        print(f"📖 Avançando para exercícios de leitura")
         
         resposta = f"""Muito bem, {state["nome"]}! 👏
 
 Você acertou {resultado["acertos"]} de {resultado["total"]} palavras!
 
-Eu já entendi o seu nível. Agora vou preparar leituras em áudio e exercícios personalizados pra te ajudar a evoluir rapidinho!
+Seu nível é: {resultado["nivel"].upper()}
 
-Podemos começar? 😄"""
+Agora vamos praticar leitura em voz alta! 📚
+
+Vou te enviar um texto bem simples. Você vai:
+1️⃣ Ver o texto escrito (imagem)
+2️⃣ Ouvir eu lendo o texto (áudio)
+3️⃣ Tentar ler o texto em voz alta
+
+Depois eu vou te dar um feedback sobre como você leu! 😊
+
+Pronto para começar?"""
         
         return resposta
+    
+    def _handle_reading_exercises_phase(self, state: Dict, user_id: str) -> str:
+        """Fase 5: Exercícios de leitura em voz alta."""
+        print("✅ FASE 5: Exercícios de leitura")
+        
+        # Pega texto baseado no nível
+        exercicio_num = state.get("exercicio_numero", 1)
+        texto_info = get_reading_text(state["nivel_alfabetizacao"], exercicio_num)
+        
+        # Salva texto atual no estado
+        state["texto_atual"] = texto_info["texto"]
+        state["texto_titulo"] = texto_info["titulo"]
+        state["fase"] = "aguardando_leitura_audio"
+        self.state_manager.save_user_state(user_id)
+        
+        print(f"   📖 Texto: {texto_info['titulo']}")
+        print(f"   📊 Nível: {texto_info['dificuldade']}")
+        
+        resposta = f"""📚 Exercício de Leitura #{exercicio_num}
+
+Título: "{texto_info["titulo"]}"
+
+Vou te enviar o texto agora! Primeiro, veja o texto e ouça eu lendo. Depois, você tenta ler em voz alta, tá bom? 😊
+
+(O texto e o áudio serão enviados a seguir)"""
+        
+        return resposta
+    
+    def _handle_reading_evaluation_phase(self, state: Dict, user_message: str, user_id: str) -> str:
+        """Fase 6: Avaliação da leitura em voz alta."""
+        print("✅ FASE 6: Avaliando leitura")
+        
+        texto_esperado = state.get("texto_atual", "")
+        texto_titulo = state.get("texto_titulo", "Texto")
+        
+        print(f"   📖 Esperado: {texto_esperado[:50]}...")
+        print(f"   🎤 Lido: {user_message[:50]}...")
+        
+        # Analisa tentativa de leitura
+        resultado = analyze_reading_attempt(texto_esperado, user_message)
+        
+        # Gera feedback
+        texto_info = {"titulo": texto_titulo}
+        feedback = generate_feedback_message(resultado, texto_info)
+        
+        print(f"   📊 Similaridade: {resultado['similaridade']}%")
+        print(f"   ⭐ Avaliação: {resultado['avaliacao']}")
+        
+        # Pergunta se quer continuar ou ir para conversação livre
+        exercicio_num = state.get("exercicio_numero", 1)
+        
+        if resultado['avaliacao'] in ["excelente", "bom"]:
+            # Oferece próximo exercício
+            state["exercicio_numero"] = exercicio_num + 1
+            state["fase"] = "exercicios_leitura"
+            
+            feedback += f"\n\n🎯 Quer fazer mais um exercício de leitura?"
+            feedback += f"\n\nDiga 'sim' para continuar ou 'não' se quiser conversar livremente!"
+        else:
+            # Oferece repetir o mesmo exercício
+            feedback += f"\n\n🔄 Quer tentar ler este texto de novo?"
+            feedback += f"\n\nDiga 'sim' para tentar novamente ou 'não' para ir para o próximo!"
+            
+            # Se disser não, vai para próximo
+            if "nao" in user_message.lower() or "não" in user_message.lower():
+                state["exercicio_numero"] = exercicio_num + 1
+                state["fase"] = "exercicios_leitura"
+            else:
+                state["fase"] = "exercicios_leitura"  # Volta para enviar o mesmo texto
+        
+        self.state_manager.save_user_state(user_id)
+        return feedback
     
     def _handle_personalized_phase(self, state: Dict, user_message: str, user_id: str) -> str:
         """Fase 5: Aprendizado personalizado com RAG."""
@@ -403,6 +503,34 @@ Responda mantendo foco em alfabetização."""),
                 "should_generate": True,
                 "words": words,
                 "prompt": prompt
+            }
+        
+        return {"should_generate": False}
+    
+    def should_generate_reading_text(self, numero: str) -> Dict:
+        """
+        Verifica se deve gerar texto de exercício de leitura.
+        
+        Returns:
+            Dict com should_generate, texto, titulo, audio_text
+        """
+        user_id = self._get_user_id(numero)
+        state = self.state_manager.get_user_state(user_id)
+        
+        if state["fase"] == "aguardando_leitura_audio":
+            print("📖 Gerando texto de leitura")
+            
+            # Pega o texto atual do estado
+            texto = state.get("texto_atual", "")
+            titulo = state.get("texto_titulo", "Texto")
+            exercicio_num = state.get("exercicio_numero", 1)
+            
+            return {
+                "should_generate": True,
+                "texto": texto,
+                "titulo": titulo,
+                "exercicio_num": exercicio_num,
+                "audio_text": texto  # Texto para TTS ler
             }
         
         return {"should_generate": False}
