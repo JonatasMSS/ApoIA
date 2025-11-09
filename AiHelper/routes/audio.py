@@ -151,20 +151,9 @@ async def processar_audio_base64(data: AudioBase64Request):
         if test_info["should_generate"]:
             print("🎨 Gerando imagem de teste de leitura...")
             
-            # Gerar a imagem usando DALL-E 3
-            image_response = client.images.generate(
-                model="dall-e-3",
-                prompt=test_info["prompt"],
-                size="1024x1024",
-                quality="hd",
-                n=1
-            )
-            
-            # Baixar a imagem e codificar em base64
-            img_url = image_response.data[0].url
-            img_response = requests.get(img_url)
-            img_response.raise_for_status()
-            img_base64 = base64.b64encode(img_response.content).decode('utf-8')
+            # Gerar a imagem usando PIL (texto perfeito, sem alucinações)
+            from services.literacy_evaluator import generate_test_image
+            img_base64 = generate_test_image(test_info["words"])
             
             print("✅ Imagem de teste gerada com sucesso.")
             
@@ -188,7 +177,6 @@ async def processar_audio_base64(data: AudioBase64Request):
                 "resposta_texto": resposta_texto,
                 "resposta_audio_base64": f"data:audio/wav;base64,{audio_base64}",
                 "imagem_base64": f"data:image/png;base64,{img_base64}",
-                "revised_prompt": image_response.data[0].revised_prompt,
                 "is_test_image": True
             }
 

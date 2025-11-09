@@ -6,12 +6,16 @@ Funcionalidades:
 - Análise de teste de leitura
 - Classificação de nível (iniciante/intermediário/avançado)
 - Cálculo de taxa de acerto
+- Geração de imagens de teste com PIL
 
 Autor: Equipe Apo.IA
 Data: Novembro 2024
 """
 
 from typing import Dict, List
+from PIL import Image, ImageDraw, ImageFont
+import io
+import base64
 
 
 def analyze_reading_level(user_response: str, expected_words: List[str]) -> Dict:
@@ -92,9 +96,81 @@ def get_test_words(nivel: str = "basico") -> List[str]:
     return palavras_por_nivel.get(nivel, palavras_por_nivel["basico"])
 
 
+def generate_test_image(words: List[str]) -> str:
+    """
+    Gera uma imagem de teste de alfabetização com as palavras.
+    Usa PIL para garantir texto perfeito e legível.
+    
+    Args:
+        words: Lista de palavras para incluir na imagem
+        
+    Returns:
+        String base64 da imagem PNG gerada
+    """
+    # Configurações da imagem
+    img_width = 1024
+    img_height = 1024
+    background_color = (255, 255, 255)  # Branco
+    
+    # Cores vibrantes para cada palavra
+    colors = [
+        (220, 20, 60),    # Vermelho
+        (30, 144, 255),   # Azul
+        (50, 205, 50),    # Verde
+        (255, 140, 0),    # Laranja
+        (138, 43, 226),   # Roxo
+        (255, 20, 147),   # Pink
+    ]
+    
+    # Criar imagem
+    img = Image.new('RGB', (img_width, img_height), background_color)
+    draw = ImageDraw.Draw(img)
+    
+    # Tentar carregar fonte, senão usa padrão
+    try:
+        # Fonte grande e bold
+        font = ImageFont.truetype("arial.ttf", 120)
+    except:
+        try:
+            font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 120)
+        except:
+            # Fallback para fonte padrão (menor)
+            font = ImageFont.load_default()
+    
+    # Calcular posições para centralizar as palavras
+    y_start = 150
+    y_spacing = 200
+    
+    # Desenhar cada palavra
+    for i, word in enumerate(words):
+        color = colors[i % len(colors)]
+        
+        # Calcular posição X para centralizar
+        # Use textbbox para obter as dimensões
+        bbox = draw.textbbox((0, 0), word, font=font)
+        text_width = bbox[2] - bbox[0]
+        x = (img_width - text_width) // 2
+        y = y_start + (i * y_spacing)
+        
+        # Desenhar sombra (outline) para melhor legibilidade
+        shadow_offset = 3
+        draw.text((x + shadow_offset, y + shadow_offset), word, fill=(200, 200, 200), font=font)
+        
+        # Desenhar texto principal
+        draw.text((x, y), word, fill=color, font=font)
+    
+    # Converter para base64
+    buffered = io.BytesIO()
+    img.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+    
+    return img_base64
+
+
 def generate_test_image_prompt(words: List[str]) -> str:
     """
-    Gera prompt otimizado para DALL-E 3 criar imagem de teste.
+    DEPRECATED: Mantido para compatibilidade.
+    Use generate_test_image() para gerar imagens com texto perfeito.
     
     Args:
         words: Lista de palavras para incluir na imagem
@@ -103,13 +179,10 @@ def generate_test_image_prompt(words: List[str]) -> str:
         Prompt detalhado para geração da imagem
     """
     prompt = (
-        f"Crie uma imagem educativa e clara para alfabetização."
-        f"Mostre {len(words)} palavras simples escritas em letras GRANDES, COLORIDAS e bem legíveis "
-        f"As palavras devem estar dispostas verticalmente ou em uma grade 2x2. "
-        f"Use cores vibrantes diferentes para cada palavra. "
-        f"As palavras são: {', '.join(words)}. "
-        f"Fundo branco ou muito claro para boa legibilidade. "
-        f"Gere SEMPRE palavras em PT-BR." 
+        f"Text only, no images or drawings. "
+        f"White background. "
+        f"Write these {len(words)} Portuguese words in large, bold, colorful letters, one per line: "
+        f"{', '.join(words)}"
     )
     
     return prompt
