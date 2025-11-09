@@ -38,23 +38,44 @@ client.on("loading_screen", (percent, message) => console.log(`📱 Carregando: 
 
 client.on("message", async (message: Message) => {
     const chat = await message.getChat();
-    console.log(`Mensage de ${message.from}: ${message.body}`);
-    console.log(`Mensage tem midia: ${message.hasMedia} e tipo: ${message.type}`);
+    console.log(`Mensagem de ${message.from}: ${message.body}`);
+    console.log(`Mensagem tem mídia: ${message.hasMedia} e tipo: ${message.type}`);
+    
+    // Verifica se não é mensagem própria, não é grupo e é do número permitido
     if(!message.fromMe && !chat.isGroup && message.from.split("@")[0] == "558388083711") {
-        if (message.hasMedia && message.type === 'ptt') {
-          console.log(`📩 Mensagem de áudio recebida de ${message.from}`);
-          await chat.sendMessage("Aguarde um pouco, processando seu áudio...");
+        // Aceita mensagens de áudio (ptt) ou texto
+        if ((message.hasMedia && message.type === 'ptt') || message.type === 'chat') {
+          console.log(`📩 Mensagem recebida de ${message.from}`);
+          await chat.sendMessage("⏳ Aguarde um momento, estou processando...");
           
           const data = await sendAudioBase64(message, message.from);
           
           // Verifica o tipo de resposta
-          if (data.tipo === 'imagem') {
-            // Envia a imagem
+          if (data.tipo === 'imagem_com_audio') {
+            console.log('🎨🔊 Enviando imagem de teste + áudio explicativo');
+            
+            // 1) Envia o áudio explicativo primeiro
+            const audioBase64 = data.resposta_audio_base64!.split(',')[1];
+            const audioMedia = new MessageMedia('audio/wav', audioBase64);
+            await chat.sendMessage(audioMedia);
+            
+            // 2) Envia a imagem com legenda
+            const imageBase64 = data.imagem_base64!.split(',')[1];
+            const imageMedia = new MessageMedia('image/png', imageBase64);
+            await chat.sendMessage(imageMedia, { 
+              caption: "👆 Olhe bem as palavras da imagem acima. Depois me diga ou escreva quais palavras você consegue ler! 😊" 
+            });
+            
+          } else if (data.tipo === 'imagem') {
+            console.log('🎨 Enviando apenas imagem');
+            // Envia apenas a imagem
             const imageBase64 = data.imagem_base64!.split(',')[1];
             const imageMedia = new MessageMedia('image/png', imageBase64);
             await chat.sendMessage(imageMedia, { caption: data.resposta_texto });
+            
           } else {
-            // Envia o áudio
+            console.log('🔊 Enviando apenas áudio');
+            // Envia apenas o áudio
             const audioBase64 = data.resposta_audio_base64!.split(',')[1];
             const audioMedia = new MessageMedia('audio/wav', audioBase64);
             await chat.sendMessage(audioMedia);

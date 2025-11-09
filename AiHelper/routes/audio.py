@@ -107,102 +107,90 @@ async def falar(texto: str = Form(...)):
 class AudioBase64Request(BaseModel):
     audio: str
     numero: str = "unknown"
+    texto_direto: str | None = None  # Para mensagens de texto sem áudio
 
 @router.post("/processar_base64")
 async def processar_audio_base64(data: AudioBase64Request):
     try:
-        print("Iniciando processamento de áudio base64...")
+        print("Iniciando processamento...")
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         texto_path = f"storage/transcricoes/{timestamp}.txt"
 
-        # Decodifica o áudio base64
-        print("Decodificando áudio base64...")
-        audio_bytes = base64.b64decode(data.audio)
+        # Verifica se é mensagem de texto direto ou áudio
+        if data.texto_direto:
+            print(f"📝 Processando mensagem de texto: {data.texto_direto}")
+            texto_usuario = data.texto_direto
+        else:
+            # Decodifica o áudio base64
+            print("Decodificando áudio base64...")
+            audio_bytes = base64.b64decode(data.audio)
 
-        # 1) Transcrição (Whisper suporta áudio em bytes via io.BytesIO)
-        print("Iniciando transcrição com Whisper...")
-        audio_file_like = io.BytesIO(audio_bytes)
-        audio_file_like.name = "input_audio.ogg"  # Nomear para ajudar o Whisper a identificar o formato
-        transcription = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=audio_file_like
-        )
-        texto_usuario = transcription.text
-        print(f"Transcrição concluída: {texto_usuario}")
+            # 1) Transcrição (Whisper suporta áudio em bytes via io.BytesIO)
+            print("Iniciando transcrição com Whisper...")
+            audio_file_like = io.BytesIO(audio_bytes)
+            audio_file_like.name = "input_audio.ogg"  # Nomear para ajudar o Whisper a identificar o formato
+            transcription = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file_like
+            )
+            texto_usuario = transcription.text
+            print(f"Transcrição concluída: {texto_usuario}")
 
         with open(texto_path, "w", encoding="utf-8") as f:
             f.write(texto_usuario)
         print(f"Transcrição salva em {texto_path}")
 
-        # 2) Detectar se o usuário quer gerar uma imagem
-        print("Verificando se é solicitação de imagem...")
-        print(f"Texto do usuário: '{texto_usuario}'")
+        # 2) Resposta da Apo.IA usando RAG com contexto
+        print("Gerando resposta com Apo.IA usando RAG...")
+        resposta_texto = conversation_manager.generate_response(data.numero, texto_usuario)
+        print(f"Resposta gerada: {resposta_texto}")
         
-        texto_lower = texto_usuario.lower()
+        # 3) Verifica se deve gerar imagem de teste de leitura
+        test_info = conversation_manager.should_generate_test_image(data.numero)
         
-        # Palavras-chave mais flexíveis - detecta variações
-        keywords_imagem = [
-            "gere", "gera", "gerar", "gerada", "gerado",
-            "crie", "cria", "criar", "criada", "criado",
-            "faça", "faz", "fazer", "faça",
-            "desenhe", "desenha", "desenhar",
-            "ilustre", "ilustra", "ilustrar",
-            "mostre", "mostra", "mostrar",
-            "visualize", "visualiza", "visualizar",
-            "quero uma imagem", "quero ver"
-        ]
-        
-        palavras_contexto = ["imagem", "foto", "figura", "desenho", "ilustração", "picture"]
-        
-        # Detecta se tem palavra-chave E palavra de contexto
-        tem_acao = any(keyword in texto_lower for keyword in keywords_imagem)
-        tem_contexto = any(contexto in texto_lower for contexto in palavras_contexto)
-        
-        solicita_imagem = tem_acao and tem_contexto
-        
-        print(f"Tem ação de geração: {tem_acao}, Tem contexto de imagem: {tem_contexto}")
-        print(f"Solicita imagem: {solicita_imagem}")
-        
-        if solicita_imagem:
-            print("🎨 Solicitação de imagem detectada!")
-            # Extrair o prompt para a imagem
-            prompt_imagem = texto_usuario
+        if test_info["should_generate"]:
+            print("🎨 Gerando imagem de teste de leitura...")
             
             # Gerar a imagem usando DALL-E 3
-            print(f"Gerando imagem com DALL-E 3: {prompt_imagem}")
             image_response = client.images.generate(
                 model="dall-e-3",
-                prompt=prompt_imagem,
+                prompt=test_info["prompt"],
                 size="1024x1024",
                 quality="hd",
                 n=1
             )
             
             # Baixar a imagem e codificar em base64
-            import requests
             img_url = image_response.data[0].url
             img_response = requests.get(img_url)
             img_response.raise_for_status()
             img_base64 = base64.b64encode(img_response.content).decode('utf-8')
             
-            # Resposta em texto sobre a imagem
-            resposta_texto = f"Imagem gerada com sucesso! Prompt revisado: {image_response.data[0].revised_prompt}"
+            print("✅ Imagem de teste gerada com sucesso.")
             
-            print("Imagem gerada com sucesso.")
+            # Gera TAMBÉM um áudio explicativo para acompanhar a imagem
+            print("🔊 Gerando áudio explicativo para o teste...")
+            sintetizado = client.audio.speech.create(
+                model="tts-1",
+                voice="alloy",
+                input=resposta_texto
+            )
+            audio_content = sintetizado.read()
+            audio_base64 = base64.b64encode(audio_content).decode('utf-8')
+            print("✅ Áudio explicativo gerado.")
+            
+            # Retorna com imagem de teste E áudio explicativo
             return {
                 "status": "ok",
-                "tipo": "imagem",
+                "tipo": "imagem_com_audio",
                 "usuario": data.numero,
                 "texto_usuario": texto_usuario,
                 "resposta_texto": resposta_texto,
+                "resposta_audio_base64": f"data:audio/wav;base64,{audio_base64}",
                 "imagem_base64": f"data:image/png;base64,{img_base64}",
-                "revised_prompt": image_response.data[0].revised_prompt
+                "revised_prompt": image_response.data[0].revised_prompt,
+                "is_test_image": True
             }
-        
-        # 3) Resposta IA normal (áudio) usando RAG com contexto
-        print("Gerando resposta com GPT-4o-mini usando RAG...")
-        resposta_texto = conversation_manager.generate_response(data.numero, texto_usuario)
-        print(f"Resposta gerada: {resposta_texto}")
 
         # 4) Sintetiza voz
         print("Sintetizando voz com TTS...")
@@ -260,6 +248,21 @@ async def obter_historico(numero: str, limit: int = 10):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/info_usuario/{numero}")
+async def info_usuario(numero: str):
+    """
+    Obtém informações do usuário (fase, nome, nível, etc)
+    """
+    try:
+        info = conversation_manager.get_user_info(numero)
+        return {
+            "status": "ok",
+            "info": info
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/limpar_contexto/{numero}")
 async def limpar_contexto(numero: str):
     """
@@ -270,6 +273,34 @@ async def limpar_contexto(numero: str):
         return {
             "status": "ok",
             "message": f"Contexto do usuário {numero} limpo com sucesso"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/reiniciar_conversa/{numero}")
+async def reiniciar_conversa(numero: str):
+    """
+    Reinicia a conversa do usuário (reseta para fase inicial mas mantém histórico)
+    """
+    try:
+        user_id = conversation_manager._get_user_id(numero)
+        state = conversation_manager._get_user_state(user_id)
+        
+        # Reseta estado para inicial
+        state["fase"] = "inicial"
+        state["nome"] = None
+        state["idade"] = None
+        state["nivel_alfabetizacao"] = None
+        state["palavras_teste"] = []
+        state["acertos"] = 0
+        state["total_testes"] = 0
+        
+        conversation_manager._save_user_state(user_id)
+        
+        return {
+            "status": "ok",
+            "message": f"Conversa do usuário {numero} reiniciada com sucesso"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
